@@ -71,27 +71,37 @@ const Post = sequelize.define('Post', {
     type: DataTypes.STRING,
     allowNull: false
   },
-  likes: {
+  authorId: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  authorLevel: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  boardId: {
     type: DataTypes.INTEGER,
-    defaultValue: 0
+    allowNull: false
+  },
+  category: {
+    type: DataTypes.STRING,
+    defaultValue: '일반'
   },
   views: {
     type: DataTypes.INTEGER,
     defaultValue: 0
   },
-  category: {
-    type: DataTypes.STRING,
-    defaultValue: 'general'
+  likes: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0
   },
-  image_url: {
-    type: DataTypes.TEXT,
+  images: {
+    type: DataTypes.JSON,
     allowNull: true
   }
 }, {
-  tableName: 'posts',
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at'
+  tableName: 'Posts',
+  timestamps: true
 });
 
 // 댓글 모델
@@ -101,7 +111,7 @@ const Comment = sequelize.define('Comment', {
     primaryKey: true,
     autoIncrement: true
   },
-  post_id: {
+  postId: {
     type: DataTypes.INTEGER,
     allowNull: false,
     references: {
@@ -117,15 +127,21 @@ const Comment = sequelize.define('Comment', {
     type: DataTypes.STRING,
     allowNull: false
   },
+  authorId: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  authorLevel: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
   likes: {
     type: DataTypes.INTEGER,
     defaultValue: 0
   }
 }, {
-  tableName: 'comments',
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at'
+  tableName: 'Comments',
+  timestamps: true
 });
 
 // 좋아요 모델
@@ -135,39 +151,25 @@ const Like = sequelize.define('Like', {
     primaryKey: true,
     autoIncrement: true
   },
-  user_id: {
+  userId: {
     type: DataTypes.STRING,
     allowNull: false
   },
-  post_id: {
+  postId: {
     type: DataTypes.INTEGER,
-    allowNull: true,
+    allowNull: false,
     references: {
       model: Post,
       key: 'id'
     }
-  },
-  comment_id: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    references: {
-      model: Comment,
-      key: 'id'
-    }
-  },
-  type: {
-    type: DataTypes.ENUM('post', 'comment'),
-    allowNull: false
   }
 }, {
-  tableName: 'likes',
+  tableName: 'Likes',
   timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at',
   indexes: [
     {
       unique: true,
-      fields: ['user_id', 'post_id', 'comment_id', 'type']
+      fields: ['userId', 'postId']
     }
   ]
 });
@@ -286,17 +288,17 @@ const TouristSpot = sequelize.define('TouristSpot', {
 });
 
 // 관계 설정
-Post.hasMany(Comment, { foreignKey: 'post_id', as: 'comments' });
-Comment.belongsTo(Post, { foreignKey: 'post_id', as: 'post' });
+Post.hasMany(Comment, { foreignKey: 'postId', as: 'Comments' });
+Comment.belongsTo(Post, { foreignKey: 'postId', as: 'post' });
 
-User.hasMany(Post, { foreignKey: 'author', sourceKey: 'id', as: 'posts' });
-Post.belongsTo(User, { foreignKey: 'author', targetKey: 'id', as: 'user' });
+User.hasMany(Post, { foreignKey: 'authorId', sourceKey: 'id', as: 'posts' });
+Post.belongsTo(User, { foreignKey: 'authorId', targetKey: 'id', as: 'user' });
 
-User.hasMany(Comment, { foreignKey: 'author', sourceKey: 'id', as: 'comments' });
-Comment.belongsTo(User, { foreignKey: 'author', targetKey: 'id', as: 'user' });
+User.hasMany(Comment, { foreignKey: 'authorId', sourceKey: 'id', as: 'comments' });
+Comment.belongsTo(User, { foreignKey: 'authorId', targetKey: 'id', as: 'user' });
 
-Post.hasMany(Like, { foreignKey: 'post_id', as: 'postLikes' });
-Comment.hasMany(Like, { foreignKey: 'comment_id', as: 'commentLikes' });
+Post.hasMany(Like, { foreignKey: 'postId', as: 'postLikes' });
+Comment.hasMany(Like, { foreignKey: 'commentId', as: 'commentLikes' });
 
 // 데이터베이스 연결 테스트
 async function testConnection() {

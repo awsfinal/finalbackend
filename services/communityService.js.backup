@@ -1,324 +1,401 @@
-const { User, Post, Comment, TouristSpot, sequelize } = require('../models/database');
-const { Op } = require('sequelize');
+const { Sequelize, DataTypes } = require('sequelize');
 const axios = require('axios');
 
+// PostgreSQL RDS 연결 설정
+const sequelize = new Sequelize(
+  process.env.DB_NAME || 'jjikgeo',
+  process.env.DB_USER || 'postgres',
+  process.env.DB_PASSWORD,
+  {
+    host: process.env.DB_HOST || 'final-db.cz420qs4q66k.ap-northeast-1.rds.amazonaws.com',
+    port: process.env.DB_PORT || 5432,
+    dialect: 'postgres',
+    logging: process.env.NODE_ENV === 'development' ? console.log : false,
+    timezone: '+09:00',
+    pool: {
+      max: 20,
+      min: 0,
+      acquire: 30000,
+      idle: 10000
+    },
+    dialectOptions: {
+      ssl: process.env.NODE_ENV === 'production' ? {
+        require: true,
+        rejectUnauthorized: false
+      } : false
+    }
+  }
+);
+
+// 사용자 모델
+const User = sequelize.define('User', {
+  id: {
+    type: DataTypes.STRING,
+    primaryKey: true
+  },
+  name: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  level: {
+    type: DataTypes.STRING,
+    defaultValue: 'Lv.1'
+  }
+}, {
+  tableName: 'users',
+  timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at'
+});
+
+// 게시글 모델
+const Post = sequelize.define('Post', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  boardId: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  title: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  content: {
+    type: DataTypes.TEXT,
+    allowNull: false
+  },
+  category: {
+    type: DataTypes.STRING,
+    defaultValue: '일반'
+  },
+  authorId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: User,
+      key: 'id'
+    }
+  },
+  author: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  authorLevel: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  likes: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0
+  },
+  views: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0
+  },
+  images: {
+    type: DataTypes.JSON,
+    allowNull: true
+  }
+});
+
+// 댓글 모델
+const Comment = sequelize.define('Comment', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  postId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: Post,
+      key: 'id'
+    }
+  },
+  authorId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: User,
+      key: 'id'
+    }
+  },
+  author: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  authorLevel: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  content: {
+    type: DataTypes.TEXT,
+    allowNull: false
+  }
+});
+
+// 좋아요 모델
+const Like = sequelize.define('Like', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  postId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: Post,
+      key: 'id'
+    }
+  },
+  userId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: User,
+      key: 'id'
+    }
+  }
+});
+
+// 관광지 모델
+const TouristSpot = sequelize.define('TouristSpot', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  contentId: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    unique: true
+  },
+  title: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  addr1: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  addr2: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  areaCode: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    index: true
+  },
+  cat1: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  cat2: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  cat3: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  contentTypeId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    index: true
+  },
+  firstImage: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  firstImage2: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  mapX: {
+    type: DataTypes.DECIMAL(10, 7),
+    allowNull: true,
+    index: true
+  },
+  mapY: {
+    type: DataTypes.DECIMAL(10, 7),
+    allowNull: true
+  },
+  tel: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  zipcode: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  overview: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  modifiedTime: {
+    type: DataTypes.STRING,
+    allowNull: true
+  }
+});
+
+// 관계 설정
+Post.belongsTo(User, { foreignKey: 'authorId', onDelete: 'CASCADE' });
+Comment.belongsTo(Post, { foreignKey: 'postId', onDelete: 'CASCADE' });
+Comment.belongsTo(User, { foreignKey: 'authorId', onDelete: 'CASCADE' });
+Like.belongsTo(Post, { foreignKey: 'postId', onDelete: 'CASCADE' });
+Like.belongsTo(User, { foreignKey: 'userId', onDelete: 'CASCADE' });
+
 class CommunityService {
-  // 사용자 생성 또는 조회
-  async getOrCreateUser(userId) {
-    try {
-      let user = await User.findByPk(userId);
-
-      if (!user) {
-        user = await User.create({
-          id: userId,
-          name: '사용자' + userId.slice(-4),
-          level: 'Lv.' + Math.floor(Math.random() * 20 + 1)
-        });
-        console.log('새 사용자 생성:', user.toJSON());
-      }
-
-      return user;
-    } catch (error) {
-      console.error('사용자 생성/조회 오류:', error);
-      throw error;
-    }
+  constructor() {
+    this.sequelize = sequelize;
+    this.User = User;
+    this.Post = Post;
+    this.Comment = Comment;
+    this.Like = Like;
+    this.TouristSpot = TouristSpot;
   }
 
-  // 게시글 작성
-  async createPost(postData) {
+  // 한국관광공사 위치기반 API - 가까운 관광지 조회
+  async fetchNearbyTouristSpotsFromAPI(latitude, longitude, radius = 10000, limit = 10) {
     try {
-      const { boardId, userId, title, content, category, author, authorLevel, images } = postData;
-
-      // 사용자 확인/생성
-      await this.getOrCreateUser(userId);
-
-      const post = await Post.create({
-        boardId,
-        title,
-        content,
-        category: category || '일반',
-        authorId: userId,
-        author,
-        authorLevel,
-        images: images || [],
-        likes: 0,
-        views: 0,
-        likedBy: []
-      });
-
-      console.log('게시글 생성 완료:', post.toJSON());
-      return post;
-    } catch (error) {
-      console.error('게시글 작성 오류:', error);
-      throw error;
-    }
-  }
-
-  // 게시글 목록 조회
-  async getPosts(boardId, userId, sort = 'latest') {
-    try {
-      let whereClause = {};
-      let orderClause = [];
-
-      // 게시판별 필터링
-      if (boardId === 'my-posts') {
-        whereClause.authorId = userId;
-      } else if (boardId === 'commented-posts') {
-        // 댓글을 단 게시글 조회
-        const commentedPostIds = await Comment.findAll({
-          where: { authorId: userId },
-          attributes: ['postId'],
-          group: ['postId']
-        });
-
-        const postIds = commentedPostIds.map(comment => comment.postId);
-        if (postIds.length === 0) {
-          return [];
-        }
-
-        whereClause.id = { [Op.in]: postIds };
-      } else {
-        whereClause.boardId = boardId;
-      }
-
-      // 정렬 설정
-      switch (sort) {
-        case 'latest':
-          orderClause = [['createdAt', 'DESC']];
-          break;
-        case 'popular':
-          orderClause = [['likes', 'DESC']];
-          break;
-        case 'comments':
-          orderClause = [
-            [sequelize.literal('(SELECT COUNT(*) FROM comments WHERE comments.postId = Post.id)'), 'DESC']
-          ];
-          break;
-        case 'views':
-          orderClause = [['views', 'DESC']];
-          break;
-        default:
-          orderClause = [['createdAt', 'DESC']];
-      }
-
-      const posts = await Post.findAll({
-        where: whereClause,
-        order: orderClause,
-        include: [
-          {
-            model: Comment,
-            as: 'comments',
-            attributes: ['id', 'content', 'author', 'authorLevel', 'authorId', 'likes', 'createdAt']
-          }
-        ],
-        limit: 50 // 최대 50개 게시글
-      });
-
-      console.log(`게시글 조회 완료: ${boardId}, ${posts.length}개`);
-      return posts;
-    } catch (error) {
-      console.error('게시글 목록 조회 오류:', error);
-      throw error;
-    }
-  }
-
-  // 특정 게시글 조회
-  async getPostById(postId) {
-    try {
-      const post = await Post.findByPk(postId, {
-        include: [
-          {
-            model: Comment,
-            as: 'comments',
-            attributes: ['id', 'content', 'author', 'authorLevel', 'authorId', 'likes', 'createdAt'],
-            order: [['createdAt', 'ASC']]
-          }
-        ]
-      });
-
-      if (post) {
-        // 조회수 증가
-        await post.increment('views');
-        console.log(`게시글 조회: ${postId}, 조회수: ${post.views + 1}`);
-      }
-
-      return post;
-    } catch (error) {
-      console.error('게시글 조회 오류:', error);
-      throw error;
-    }
-  }
-
-  // 댓글 작성
-  async createComment(commentData) {
-    try {
-      const { postId, userId, content, author, authorLevel } = commentData;
-
-      // 사용자 확인/생성
-      await this.getOrCreateUser(userId);
-
-      // 게시글 존재 확인
-      const post = await Post.findByPk(postId);
-      if (!post) {
-        throw new Error('게시글을 찾을 수 없습니다.');
-      }
-
-      const comment = await Comment.create({
-        postId,
-        content,
-        authorId: userId,
-        author,
-        authorLevel,
-        likes: 0
-      });
-
-      console.log('댓글 생성 완료:', comment.toJSON());
-      return comment;
-    } catch (error) {
-      console.error('댓글 작성 오류:', error);
-      throw error;
-    }
-  }
-
-  // 좋아요 토글
-  async toggleLike(postId, userId) {
-    try {
-      const post = await Post.findByPk(postId);
-      if (!post) {
-        throw new Error('게시글을 찾을 수 없습니다.');
-      }
-
-      let likedBy = post.likedBy || [];
-      const likedIndex = likedBy.indexOf(userId);
-
-      if (likedIndex > -1) {
-        // 좋아요 취소
-        likedBy.splice(likedIndex, 1);
-        await post.decrement('likes');
-      } else {
-        // 좋아요 추가
-        likedBy.push(userId);
-        await post.increment('likes');
-      }
-
-      await post.update({ likedBy });
-      await post.reload();
-
-      console.log(`좋아요 토글: ${postId}, 현재 좋아요: ${post.likes}`);
-      return post.likes;
-    } catch (error) {
-      console.error('좋아요 처리 오류:', error);
-      throw error;
-    }
-  }
-
-  // 게시판별 게시글 수 조회
-  async getPostCount(boardId, userId) {
-    try {
-      let whereClause = {};
-
-      if (boardId === 'my-posts') {
-        whereClause.authorId = userId;
-      } else if (boardId === 'commented-posts') {
-        const commentedPostIds = await Comment.findAll({
-          where: { authorId: userId },
-          attributes: ['postId'],
-          group: ['postId']
-        });
-
-        const postIds = commentedPostIds.map(comment => comment.postId);
-        if (postIds.length === 0) {
-          return 0;
-        }
-
-        whereClause.id = { [Op.in]: postIds };
-      } else {
-        whereClause.boardId = boardId;
-      }
-
-      const count = await Post.count({ where: whereClause });
-      console.log(`게시판 통계: ${boardId}, ${count}개`);
-      return count;
-    } catch (error) {
-      console.error('게시판 통계 조회 오류:', error);
-      return 0;
-    }
-  }
-
-  // 전체 통계 조회
-  async getStats() {
-    try {
-      const totalPosts = await Post.count();
-      const totalUsers = await User.count();
-      const totalComments = await Comment.count();
-
-      const postsByBoard = await Post.findAll({
-        attributes: [
-          'boardId',
-          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
-        ],
-        group: ['boardId']
-      });
-
-      const stats = {
-        totalPosts,
-        totalUsers,
-        totalComments,
-        postsByBoard: postsByBoard.reduce((acc, item) => {
-          acc[item.boardId] = parseInt(item.dataValues.count);
-          return acc;
-        }, {})
-      };
-
-      console.log('전체 통계:', stats);
-      return stats;
-    } catch (error) {
-      console.error('통계 조회 오류:', error);
-      throw error;
-    }
-  }
-
-  // 한국관광공사 API - 서울 관광지 데이터 가져오기
-  async fetchSeoulTouristSpots() {
-    try {
+      // 환경변수에서 API 키 가져오기
       const apiKey = process.env.TOUR_API_KEY;
+      
       if (!apiKey) {
-        throw new Error('관광공사 API 키가 설정되지 않았습니다.');
+        console.log('⚠️ TOUR_API_KEY가 설정되지 않아 API 조회를 건너뜁니다.');
+        return [];
       }
+      
+      console.log(`🏛️ 위치기반 관광지 조회: ${latitude}, ${longitude} (반경: ${radius}m)`);
 
-      console.log('🏛️ 서울 관광지 데이터 가져오기 시작...');
-
-      const baseUrl = 'https://apis.data.go.kr/B551011/KorService1/areaBasedList1';
+      const baseUrl = 'https://apis.data.go.kr/B551011/KorService2/locationBasedList2';
       const params = {
         serviceKey: apiKey,
-        numOfRows: 100,
-        pageNo: 1,
+        numOfRows: limit.toString(),
+        pageNo: '1',
         MobileOS: 'ETC',
         MobileApp: 'JjikJio',
         _type: 'json',
-        listYN: 'Y',
-        arrange: 'A',
-        contentTypeId: 12, // 관광지
-        areaCode: 1, // 서울
-        cat1: 'A01' // 자연
+        arrange: 'E', // 거리순 정렬
+        mapX: longitude.toString(),
+        mapY: latitude.toString(),
+        radius: radius.toString(),
+        contentTypeId: '12', // 관광지
+        areaCode: '1' // 서울
       };
 
-      const response = await axios.get(baseUrl, { params });
+      console.log('🔍 API 요청 파라미터:', { ...params, serviceKey: '***' });
+
+      const response = await axios.get(baseUrl, { 
+        params,
+        timeout: 10000 // 10초 타임아웃
+      });
       
-      if (response.data.response.header.resultCode === '0000') {
-        const items = response.data.response.body.items.item || [];
-        console.log(`✅ 관광공사 API 응답: ${items.length}개 관광지`);
-        return items;
+      console.log('📡 API 응답 상태:', response.status);
+      
+      if (response.data && response.data.response) {
+        const header = response.data.response.header;
+        const body = response.data.response.body;
+        
+        console.log('📋 API 응답 헤더:', header);
+        
+        if (header && header.resultCode === '0000') {
+          const items = body && body.items ? body.items.item : [];
+          const itemsArray = Array.isArray(items) ? items : (items ? [items] : []);
+          
+          console.log(`✅ 관광공사 API 응답: ${itemsArray.length}개 관광지`);
+          return itemsArray;
+        } else {
+          const errorMsg = header ? header.resultMsg : '알 수 없는 오류';
+          throw new Error(`API 오류: ${errorMsg}`);
+        }
       } else {
-        throw new Error(`API 오류: ${response.data.response.header.resultMsg}`);
+        throw new Error('API 응답 구조가 예상과 다릅니다.');
       }
     } catch (error) {
-      console.error('❌ 관광공사 API 호출 오류:', error.message);
+      console.error('❌ 관광공사 위치기반 API 호출 오류:', error.message);
+      if (error.response) {
+        console.error('❌ API 응답 오류:', error.response.status, error.response.data);
+      }
       throw error;
     }
   }
 
-  // 서울 관광지 데이터를 MySQL에 저장
+  // 한국관광공사 API - 서울 관광지 데이터 가져오기 (지역기반)
+  async fetchSeoulTouristSpots() {
+    try {
+      // 제공받은 인증키 사용
+      const apiKey = 'jXbeQ98Dvep6SzEFu8ulcLjvOeUWdY107O4fsq9SUJ0PQkDsUPXrm8gmZ8hKCnSSEEF6iM4Le8oMeyhqLrD3MQ==';
+      
+      console.log('🏛️ 서울 관광지 데이터 가져오기 시작...');
+
+      const baseUrl = 'https://apis.data.go.kr/B551011/KorService2/areaBasedList2';
+      const params = {
+        serviceKey: apiKey,
+        numOfRows: '100',
+        pageNo: '1',
+        MobileOS: 'ETC',
+        MobileApp: 'JjikJio',
+        _type: 'json',
+        arrange: 'A', // 제목순
+        contentTypeId: '12', // 관광지
+        areaCode: '1' // 서울
+      };
+
+      console.log('📡 API 호출 URL:', baseUrl);
+      console.log('📡 API 파라미터:', params);
+
+      const response = await axios.get(baseUrl, { params });
+      
+      console.log('📡 API 응답 상태:', response.status);
+      console.log('📡 API 응답 구조:', JSON.stringify(response.data, null, 2));
+      
+      // 새로운 API 응답 구조 처리
+      if (response.data && response.data.response) {
+        const header = response.data.response.header;
+        const body = response.data.response.body;
+        
+        if (header && header.resultCode === '0000') {
+          const items = body && body.items ? body.items.item : [];
+          const itemsArray = Array.isArray(items) ? items : [items];
+          
+          console.log(`✅ 관광공사 API 응답: ${itemsArray.length}개 관광지`);
+          return itemsArray;
+        } else {
+          const errorMsg = header ? header.resultMsg : '알 수 없는 오류';
+          throw new Error(`API 오류: ${errorMsg}`);
+        }
+      } else if (response.data && response.data.resultCode) {
+        // 새로운 응답 구조 처리
+        if (response.data.resultCode === '0000') {
+          const items = response.data.items ? response.data.items.item : [];
+          const itemsArray = Array.isArray(items) ? items : [items];
+          
+          console.log(`✅ 관광공사 API 응답: ${itemsArray.length}개 관광지`);
+          return itemsArray;
+        } else {
+          throw new Error(`API 오류: ${response.data.resultMsg}`);
+        }
+      } else {
+        console.error('❌ 예상과 다른 API 응답 구조:', response.data);
+        throw new Error('API 응답 구조가 예상과 다릅니다.');
+      }
+    } catch (error) {
+      console.error('❌ 관광공사 API 호출 오류:', error.message);
+      if (error.response) {
+        console.error('❌ API 응답 오류:', error.response.status, error.response.data);
+      }
+      throw error;
+    }
+  }
+
+  // 서울 관광지 데이터를 PostgreSQL RDS에 저장
   async saveSeoulTouristSpots() {
     try {
       console.log('💾 서울 관광지 데이터 저장 시작...');
@@ -366,20 +443,176 @@ class CommunityService {
     }
   }
 
-  // GPS 기반 가까운 관광지 조회 (3개)
+  // 관광지 상세정보 조회 (RDS 우선, API fallback)
+  async getTouristSpotDetail(contentId) {
+    try {
+      console.log(`🔍 관광지 상세정보 조회: ${contentId}`);
+
+      // 1. RDS에서 먼저 조회
+      const rdsSpot = await TouristSpot.findOne({
+        where: { contentId: contentId }
+      });
+
+      if (rdsSpot) {
+        console.log(`✅ RDS에서 관광지 정보 발견: ${rdsSpot.title}`);
+        
+        // RDS 데이터를 API 형식에 맞게 변환
+        const rdsData = {
+          contentid: rdsSpot.contentId,
+          title: rdsSpot.title,
+          addr1: rdsSpot.addr1,
+          addr2: rdsSpot.addr2,
+          areacode: rdsSpot.areaCode,
+          cat1: rdsSpot.cat1,
+          cat2: rdsSpot.cat2,
+          cat3: rdsSpot.cat3,
+          contenttypeid: rdsSpot.contentTypeId,
+          firstimage: rdsSpot.firstImage,
+          firstimage2: rdsSpot.firstImage2,
+          mapx: rdsSpot.mapX,
+          mapy: rdsSpot.mapY,
+          tel: rdsSpot.tel,
+          zipcode: rdsSpot.zipcode,
+          modifiedtime: rdsSpot.modifiedTime,
+          // 기본 설명 추가
+          overview: `${rdsSpot.title}에 대한 상세 정보입니다.`,
+          homepage: '',
+          telname: '',
+          // RDS 데이터임을 표시
+          dataSource: 'RDS'
+        };
+
+        return rdsData;
+      }
+
+      // 2. RDS에 없으면 API에서 조회
+      console.log(`🔄 RDS에 없음 - API에서 조회: ${contentId}`);
+      return await this.fetchTouristSpotDetailFromAPI(contentId);
+
+    } catch (error) {
+      console.error('❌ 관광지 상세정보 조회 오류:', error.message);
+      throw error;
+    }
+  }
+
+  // 한국관광공사 API에서 관광지 상세정보 조회
+  async fetchTouristSpotDetailFromAPI(contentId) {
+    try {
+      // 하드코딩된 API 키 사용 (fallback용)
+      const apiKey = 'jXbeQ98Dvep6SzEFu8ulcLjvOeUWdY107O4fsq9SUJ0PQkDsUPXrm8gmZ8hKCnSSEEF6iM4Le8oMeyhqLrD3MQ==';
+      
+      console.log(`🔍 API에서 관광지 상세정보 조회: ${contentId}`);
+
+      // 1. 기본 상세정보 조회
+      const detailUrl = 'https://apis.data.go.kr/B551011/KorService2/detailCommon2';
+      const detailParams = {
+        serviceKey: apiKey,
+        numOfRows: '10',
+        pageNo: '1',
+        MobileOS: 'ETC',
+        MobileApp: 'JjikJio',
+        _type: 'json',
+        contentId: contentId
+      };
+
+      const detailResponse = await axios.get(detailUrl, { params: detailParams });
+      
+      let detailInfo = {};
+      if (detailResponse.data && detailResponse.data.response && 
+          detailResponse.data.response.header.resultCode === '0000') {
+        const items = detailResponse.data.response.body.items.item;
+        const itemsArray = Array.isArray(items) ? items : [items];
+        if (itemsArray.length > 0) {
+          detailInfo = itemsArray[0];
+        }
+      }
+
+      // 2. 소개정보 조회 (이용시간, 요금 등)
+      const introUrl = 'https://apis.data.go.kr/B551011/KorService2/detailIntro2';
+      const introParams = {
+        serviceKey: apiKey,
+        numOfRows: '10',
+        pageNo: '1',
+        MobileOS: 'ETC',
+        MobileApp: 'JjikJio',
+        _type: 'json',
+        contentId: contentId,
+        contentTypeId: '12' // 관광지
+      };
+
+      const introResponse = await axios.get(introUrl, { params: introParams });
+      
+      let introInfo = {};
+      if (introResponse.data && introResponse.data.response && 
+          introResponse.data.response.header.resultCode === '0000') {
+        const items = introResponse.data.response.body.items.item;
+        const itemsArray = Array.isArray(items) ? items : [items];
+        if (itemsArray.length > 0) {
+          introInfo = itemsArray[0];
+        }
+      }
+
+      // 3. 정보 통합
+      const combinedInfo = {
+        // 기본 정보
+        contentId: detailInfo.contentid || contentId,
+        title: detailInfo.title || '정보 없음',
+        addr1: detailInfo.addr1 || '주소 정보 없음',
+        addr2: detailInfo.addr2 || '',
+        tel: detailInfo.tel || introInfo.infocenter || '전화번호 정보 없음',
+        homepage: detailInfo.homepage || '',
+        overview: detailInfo.overview || '설명 정보 없음',
+        firstImage: detailInfo.firstimage || '',
+        firstImage2: detailInfo.firstimage2 || '',
+        mapX: detailInfo.mapx || '',
+        mapY: detailInfo.mapy || '',
+        zipcode: detailInfo.zipcode || '',
+        
+        // 상세 정보 (소개정보에서)
+        usetime: introInfo.usetime || '이용시간 정보 없음',
+        restdate: introInfo.restdate || '휴무일 정보 없음',
+        usefee: introInfo.usefee || '요금 정보 없음',
+        parking: introInfo.parking || '주차장 정보 없음',
+        chkbabycarriage: introInfo.chkbabycarriage || '',
+        chkpet: introInfo.chkpet || '',
+        chkcreditcard: introInfo.chkcreditcard || '',
+        infocenter: introInfo.infocenter || detailInfo.tel || '문의처 정보 없음',
+        
+        // 추가 편의시설 정보
+        restroom: introInfo.restroom || '',
+        smoking: introInfo.smoking || '',
+        guidebook: introInfo.guidebook || '',
+        audioguide: introInfo.audioguide || ''
+      };
+
+      console.log(`✅ 관광지 상세정보 조회 완료: ${combinedInfo.title}`);
+      return combinedInfo;
+
+    } catch (error) {
+      console.error('❌ 관광지 상세정보 조회 오류:', error.message);
+      if (error.response) {
+        console.error('❌ API 응답 오류:', error.response.status, error.response.data);
+      }
+      throw error;
+    }
+  }
+
+  // GPS 기반 가까운 관광지 조회 (메인페이지용 - RDS 우선)
   async getNearbyTouristSpots(latitude, longitude, limit = 3) {
     try {
-      console.log(`🔍 가까운 관광지 검색: ${latitude}, ${longitude}`);
+      console.log(`🔍 가까운 관광지 검색 (RDS): ${latitude}, ${longitude}`);
 
-      // Haversine 공식을 사용한 거리 계산 SQL
+      // RDS에서 직접 조회 (거리 계산 포함)
       const query = `
-        SELECT *,
-        (6371 * acos(cos(radians(:latitude)) * cos(radians(mapY)) * 
-        cos(radians(mapX) - radians(:longitude)) + sin(radians(:latitude)) * 
-        sin(radians(mapY)))) AS distance
-        FROM tourist_spots
-        WHERE mapX IS NOT NULL AND mapY IS NOT NULL
-        HAVING distance <= 20
+        SELECT *, distance FROM (
+          SELECT *,
+          (6371 * acos(cos(radians(:latitude)) * cos(radians("mapY")) * 
+          cos(radians("mapX") - radians(:longitude)) + sin(radians(:latitude)) * 
+          sin(radians("mapY")))) AS distance
+          FROM "TouristSpots"
+          WHERE "mapX" IS NOT NULL AND "mapY" IS NOT NULL
+        ) AS subquery
+        WHERE distance <= 20
         ORDER BY distance ASC
         LIMIT :limit
       `;
@@ -389,11 +622,65 @@ class CommunityService {
         type: sequelize.QueryTypes.SELECT
       });
 
-      console.log(`✅ 가까운 관광지 ${nearbySpots.length}개 발견`);
-      return nearbySpots;
+      console.log(`✅ RDS에서 가까운 관광지 ${nearbySpots.length}개 발견`);
+      
+      // 데이터 형식 통일
+      const formattedSpots = nearbySpots.map(spot => ({
+        contentId: spot.contentId,
+        title: spot.title,
+        addr1: spot.addr1,
+        addr2: spot.addr2,
+        areaCode: spot.areaCode,
+        cat1: spot.cat1,
+        cat2: spot.cat2,
+        cat3: spot.cat3,
+        contentTypeId: spot.contentTypeId,
+        firstImage: spot.firstImage,
+        firstImage2: spot.firstImage2,
+        mapX: parseFloat(spot.mapX),
+        mapY: parseFloat(spot.mapY),
+        tel: spot.tel,
+        zipcode: spot.zipcode,
+        distance: parseFloat(spot.distance),
+        modifiedTime: spot.modifiedTime
+      }));
+
+      return formattedSpots;
     } catch (error) {
-      console.error('❌ 가까운 관광지 조회 오류:', error);
-      return [];
+      console.error('❌ RDS에서 가까운 관광지 조회 오류:', error);
+      
+      // RDS 실패 시에만 API 호출 (fallback)
+      try {
+        console.log('🔄 RDS 실패 - API에서 관광지 조회 시도...');
+        const apiSpots = await this.fetchNearbyTouristSpotsFromAPI(latitude, longitude, 10000, limit);
+        
+        // API 데이터를 메인페이지 형식에 맞게 변환
+        const formattedSpots = apiSpots.map(spot => ({
+          contentId: spot.contentid,
+          title: spot.title,
+          addr1: spot.addr1,
+          addr2: spot.addr2,
+          areaCode: spot.areacode,
+          cat1: spot.cat1,
+          cat2: spot.cat2,
+          cat3: spot.cat3,
+          contentTypeId: spot.contenttypeid,
+          firstImage: spot.firstimage,
+          firstImage2: spot.firstimage2,
+          mapX: parseFloat(spot.mapx),
+          mapY: parseFloat(spot.mapy),
+          tel: spot.tel,
+          zipcode: spot.zipcode,
+          distance: parseFloat(spot.dist) / 1000, // 미터를 킬로미터로 변환
+          modifiedTime: spot.modifiedtime
+        }));
+
+        console.log(`✅ API fallback으로 관광지 ${formattedSpots.length}개 발견`);
+        return formattedSpots;
+      } catch (fallbackError) {
+        console.error('❌ API fallback도 실패:', fallbackError);
+        return []; // 빈 배열 반환
+      }
     }
   }
 
@@ -408,6 +695,281 @@ class CommunityService {
       return 0;
     }
   }
+
+  // RDS 관광지 샘플 데이터 조회 (디버깅용)
+  async getSampleTouristSpots(limit = 5) {
+    try {
+      const sampleSpots = await TouristSpot.findAll({
+        limit: limit,
+        order: [['createdAt', 'DESC']],
+        attributes: ['contentId', 'title', 'addr1', 'mapX', 'mapY', 'firstImage', 'createdAt']
+      });
+      
+      console.log(`📋 샘플 관광지 ${sampleSpots.length}개 조회`);
+      return sampleSpots;
+    } catch (error) {
+      console.error('샘플 관광지 조회 오류:', error);
+      return [];
+    }
+  }
+
+  // 기존 커뮤니티 관련 메서드들은 그대로 유지...
+  // (여기서는 생략하고 필요시 추가)
 }
 
 module.exports = new CommunityService();
+  // ==================== 커뮤니티 관련 메서드 ====================
+
+  // 게시글 목록 조회
+  async getPosts(boardId, userId = null, sortBy = 'latest', page = 1, limit = 10) {
+    try {
+      console.log(`📋 게시글 목록 조회: boardId=${boardId}, sortBy=${sortBy}, page=${page}`);
+      
+      const offset = (page - 1) * limit;
+      let orderBy = [['createdAt', 'DESC']]; // 기본: 최신순
+      
+      if (sortBy === 'popular') {
+        orderBy = [['likes', 'DESC'], ['views', 'DESC']];
+      } else if (sortBy === 'views') {
+        orderBy = [['views', 'DESC']];
+      }
+
+      const posts = await Post.findAll({
+        where: { boardId },
+        order: orderBy,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        include: [
+          {
+            model: Comment,
+            attributes: ['id']
+          }
+        ]
+      });
+
+      const formattedPosts = posts.map(post => ({
+        id: post.id,
+        title: post.title,
+        content: post.content,
+        author: post.author,
+        authorId: post.authorId,
+        authorLevel: post.authorLevel,
+        boardId: post.boardId,
+        category: post.category,
+        views: post.views || 0,
+        likes: post.likes || 0,
+        commentCount: post.Comments ? post.Comments.length : 0,
+        images: post.images,
+        createdAt: post.createdAt,
+        updatedAt: post.updatedAt
+      }));
+
+      console.log(`✅ 게시글 ${formattedPosts.length}개 조회 완료`);
+      return formattedPosts;
+    } catch (error) {
+      console.error('❌ 게시글 목록 조회 오류:', error);
+      throw error;
+    }
+  }
+
+  // 게시글 생성
+  async createPost(postData) {
+    try {
+      console.log('📝 새 게시글 생성:', postData.title);
+      
+      const post = await Post.create({
+        title: postData.title,
+        content: postData.content,
+        author: postData.author,
+        authorId: postData.authorId,
+        authorLevel: postData.authorLevel || 'Lv.1',
+        boardId: postData.boardId,
+        category: postData.category,
+        images: postData.images || null,
+        views: 0,
+        likes: 0
+      });
+
+      console.log(`✅ 게시글 생성 완료: ID ${post.id}`);
+      return post;
+    } catch (error) {
+      console.error('❌ 게시글 생성 오류:', error);
+      throw error;
+    }
+  }
+
+  // 게시글 상세 조회
+  async getPostDetail(postId, userId = null) {
+    try {
+      console.log(`📖 게시글 상세 조회: ${postId}`);
+      
+      // 조회수 증가
+      await Post.increment('views', { where: { id: postId } });
+      
+      const post = await Post.findByPk(postId, {
+        include: [
+          {
+            model: Comment,
+            order: [['createdAt', 'ASC']]
+          }
+        ]
+      });
+
+      if (!post) {
+        throw new Error('게시글을 찾을 수 없습니다');
+      }
+
+      console.log(`✅ 게시글 상세 조회 완료: ${post.title}`);
+      return post;
+    } catch (error) {
+      console.error('❌ 게시글 상세 조회 오류:', error);
+      throw error;
+    }
+  }
+
+  // 댓글 목록 조회
+  async getComments(postId) {
+    try {
+      console.log(`💬 댓글 목록 조회: postId=${postId}`);
+      
+      const comments = await Comment.findAll({
+        where: { postId },
+        order: [['createdAt', 'ASC']]
+      });
+
+      console.log(`✅ 댓글 ${comments.length}개 조회 완료`);
+      return comments;
+    } catch (error) {
+      console.error('❌ 댓글 목록 조회 오류:', error);
+      throw error;
+    }
+  }
+
+  // 댓글 생성
+  async createComment(commentData) {
+    try {
+      console.log('💬 새 댓글 생성:', commentData.content.substring(0, 50));
+      
+      const comment = await Comment.create({
+        content: commentData.content,
+        author: commentData.author,
+        authorId: commentData.authorId,
+        authorLevel: commentData.authorLevel || 'Lv.1',
+        postId: commentData.postId,
+        likes: 0
+      });
+
+      console.log(`✅ 댓글 생성 완료: ID ${comment.id}`);
+      return comment;
+    } catch (error) {
+      console.error('❌ 댓글 생성 오류:', error);
+      throw error;
+    }
+  }
+
+  // 좋아요 토글
+  async toggleLike(postId, userId) {
+    try {
+      console.log(`👍 좋아요 토글: postId=${postId}, userId=${userId}`);
+      
+      const existingLike = await Like.findOne({
+        where: { postId, userId }
+      });
+
+      if (existingLike) {
+        // 좋아요 취소
+        await existingLike.destroy();
+        await Post.decrement('likes', { where: { id: postId } });
+        console.log('✅ 좋아요 취소 완료');
+        return { liked: false };
+      } else {
+        // 좋아요 추가
+        await Like.create({ postId, userId });
+        await Post.increment('likes', { where: { id: postId } });
+        console.log('✅ 좋아요 추가 완료');
+        return { liked: true };
+      }
+    } catch (error) {
+      console.error('❌ 좋아요 토글 오류:', error);
+      throw error;
+    }
+  }
+
+  // 게시판 통계
+  async getBoardStats(boardId) {
+    try {
+      const totalPosts = await Post.count({ where: { boardId } });
+      const totalComments = await Comment.count({
+        include: [{
+          model: Post,
+          where: { boardId }
+        }]
+      });
+
+      return {
+        totalPosts,
+        totalComments
+      };
+    } catch (error) {
+      console.error('❌ 게시판 통계 조회 오류:', error);
+      throw error;
+    }
+  }
+}
+
+module.exports = new CommunityService();
+  // 테스트 데이터 생성
+  async createTestData() {
+    try {
+      console.log('🔧 커뮤니티 테스트 데이터 생성...');
+      
+      // 테스트 사용자 생성
+      const testUser = await User.findOrCreate({
+        where: { id: 'test_user_1' },
+        defaults: {
+          id: 'test_user_1',
+          name: '테스트 사용자',
+          level: 'Lv.1'
+        }
+      });
+
+      // 테스트 게시글 생성
+      const testPosts = [
+        {
+          title: '경복궁 방문 후기',
+          content: '오늘 경복궁을 다녀왔는데 정말 아름다웠습니다. 특히 근정전이 인상적이었어요!',
+          author: '테스트 사용자',
+          authorId: 'test_user_1',
+          authorLevel: 'Lv.1',
+          boardId: 1,
+          category: '후기',
+          views: 15,
+          likes: 3
+        },
+        {
+          title: '덕수궁 관람 팁',
+          content: '덕수궁 관람할 때 꼭 알아두면 좋은 팁들을 공유합니다.',
+          author: '테스트 사용자',
+          authorId: 'test_user_1',
+          authorLevel: 'Lv.1',
+          boardId: 1,
+          category: '정보',
+          views: 8,
+          likes: 1
+        }
+      ];
+
+      for (const postData of testPosts) {
+        await Post.findOrCreate({
+          where: { title: postData.title },
+          defaults: postData
+        });
+      }
+
+      console.log('✅ 커뮤니티 테스트 데이터 생성 완료');
+      return true;
+    } catch (error) {
+      console.error('❌ 테스트 데이터 생성 오류:', error);
+      return false;
+    }
+  }

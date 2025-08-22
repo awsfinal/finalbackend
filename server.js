@@ -1029,7 +1029,28 @@ function formatTime(dateString) {
 }
 
 // 커뮤니티 API 라우트들
-
+// photo-share API (사진 공유 게시판)
+app.get('/api/community/photo-share', async (req, res) => {
+  try {
+    const { userId, sort = 'latest' } = req.query;
+    console.log(`사진 공유 게시글 조회: 사용자: ${userId}, 정렬: ${sort}`);
+    
+    // photo-share는 boardId 2로 가정
+    const posts = await communityService.getPosts(2, userId, sort);
+    
+    res.json({
+      success: true,
+      posts: posts,
+      total: posts.length
+    });
+  } catch (error) {
+    console.error('❌ 사진 공유 게시글 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '사진 공유 게시글을 불러올 수 없습니다.'
+    });
+  }
+});
 // 게시글 목록 조회 (PostgreSQL)
 app.get('/api/community/posts/:boardId', async (req, res) => {
   try {
