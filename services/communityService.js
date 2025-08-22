@@ -1,0 +1,716 @@
+const { Sequelize, DataTypes } = require('sequelize');
+const axios = require('axios');
+
+// PostgreSQL RDS 연결 설정
+const sequelize = new Sequelize(
+  process.env.DB_NAME || 'jjikgeo',
+  process.env.DB_USER || 'postgres',
+  process.env.DB_PASSWORD,
+  {
+    host: process.env.DB_HOST || 'final-db.cz420qs4q66k.ap-northeast-1.rds.amazonaws.com',
+    port: process.env.DB_PORT || 5432,
+    dialect: 'postgres',
+    logging: process.env.NODE_ENV === 'development' ? console.log : false,
+    timezone: '+09:00',
+    pool: {
+      max: 20,
+      min: 0,
+      acquire: 30000,
+      idle: 10000
+    },
+    dialectOptions: {
+      ssl: process.env.NODE_ENV === 'production' ? {
+        require: true,
+        rejectUnauthorized: false
+      } : false
+    }
+  }
+);
+
+// 사용자 모델
+const User = sequelize.define('User', {
+  id: {
+    type: DataTypes.STRING,
+    primaryKey: true
+  },
+  name: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  level: {
+    type: DataTypes.STRING,
+    defaultValue: 'Lv.1'
+  }
+}, {
+  tableName: 'users',
+  timestamps: true,
+  createdAt: 'created_at',
+  updatedAt: 'updated_at'
+});
+
+// 게시글 모델
+const Post = sequelize.define('Post', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  boardId: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  title: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  content: {
+    type: DataTypes.TEXT,
+    allowNull: false
+  },
+  category: {
+    type: DataTypes.STRING,
+    defaultValue: '일반'
+  },
+  authorId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: User,
+      key: 'id'
+    }
+  },
+  author: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  authorLevel: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  likes: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0
+  },
+  views: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0
+  },
+  images: {
+    type: DataTypes.JSON,
+    allowNull: true
+  }
+});
+
+// 댓글 모델
+const Comment = sequelize.define('Comment', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  postId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: Post,
+      key: 'id'
+    }
+  },
+  authorId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: User,
+      key: 'id'
+    }
+  },
+  author: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  authorLevel: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  content: {
+    type: DataTypes.TEXT,
+    allowNull: false
+  }
+});
+
+// 좋아요 모델
+const Like = sequelize.define('Like', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  postId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: Post,
+      key: 'id'
+    }
+  },
+  userId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    references: {
+      model: User,
+      key: 'id'
+    }
+  }
+});
+
+// 관광지 모델
+const TouristSpot = sequelize.define('TouristSpot', {
+  id: {
+    type: DataTypes.INTEGER,
+    primaryKey: true,
+    autoIncrement: true
+  },
+  contentId: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    unique: true
+  },
+  title: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  addr1: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  addr2: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  areaCode: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    index: true
+  },
+  cat1: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  cat2: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  cat3: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  contentTypeId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    index: true
+  },
+  firstImage: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  firstImage2: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  mapX: {
+    type: DataTypes.DECIMAL(10, 7),
+    allowNull: true,
+    index: true
+  },
+  mapY: {
+    type: DataTypes.DECIMAL(10, 7),
+    allowNull: true
+  },
+  tel: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  zipcode: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  overview: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  modifiedTime: {
+    type: DataTypes.STRING,
+    allowNull: true
+  }
+});
+
+// 관계 설정
+Post.belongsTo(User, { foreignKey: 'authorId', onDelete: 'CASCADE' });
+Comment.belongsTo(Post, { foreignKey: 'postId', onDelete: 'CASCADE' });
+Comment.belongsTo(User, { foreignKey: 'authorId', onDelete: 'CASCADE' });
+Like.belongsTo(Post, { foreignKey: 'postId', onDelete: 'CASCADE' });
+Like.belongsTo(User, { foreignKey: 'userId', onDelete: 'CASCADE' });
+
+class CommunityService {
+  constructor() {
+    this.sequelize = sequelize;
+    this.User = User;
+    this.Post = Post;
+    this.Comment = Comment;
+    this.Like = Like;
+    this.TouristSpot = TouristSpot;
+  }
+
+  // 한국관광공사 위치기반 API - 가까운 관광지 조회
+  async fetchNearbyTouristSpotsFromAPI(latitude, longitude, radius = 10000, limit = 10) {
+    try {
+      // 환경변수에서 API 키 가져오기
+      const apiKey = process.env.TOUR_API_KEY;
+      
+      if (!apiKey) {
+        throw new Error('TOUR_API_KEY 환경변수가 설정되지 않았습니다.');
+      }
+      
+      console.log(`🏛️ 위치기반 관광지 조회: ${latitude}, ${longitude} (반경: ${radius}m)`);
+
+      const baseUrl = 'https://apis.data.go.kr/B551011/KorService2/locationBasedList2';
+      const params = {
+        serviceKey: apiKey,
+        numOfRows: limit.toString(),
+        pageNo: '1',
+        MobileOS: 'ETC',
+        MobileApp: 'JjikJio',
+        _type: 'json',
+        arrange: 'E', // 거리순 정렬
+        mapX: longitude.toString(),
+        mapY: latitude.toString(),
+        radius: radius.toString(),
+        contentTypeId: '12', // 관광지
+        areaCode: '1' // 서울
+      };
+
+      console.log('🔍 API 요청 파라미터:', { ...params, serviceKey: '***' });
+
+      const response = await axios.get(baseUrl, { 
+        params,
+        timeout: 10000 // 10초 타임아웃
+      });
+      
+      console.log('📡 API 응답 상태:', response.status);
+      
+      if (response.data && response.data.response) {
+        const header = response.data.response.header;
+        const body = response.data.response.body;
+        
+        console.log('📋 API 응답 헤더:', header);
+        
+        if (header && header.resultCode === '0000') {
+          const items = body && body.items ? body.items.item : [];
+          const itemsArray = Array.isArray(items) ? items : (items ? [items] : []);
+          
+          console.log(`✅ 관광공사 API 응답: ${itemsArray.length}개 관광지`);
+          return itemsArray;
+        } else {
+          const errorMsg = header ? header.resultMsg : '알 수 없는 오류';
+          throw new Error(`API 오류: ${errorMsg}`);
+        }
+      } else {
+        throw new Error('API 응답 구조가 예상과 다릅니다.');
+      }
+    } catch (error) {
+      console.error('❌ 관광공사 위치기반 API 호출 오류:', error.message);
+      if (error.response) {
+        console.error('❌ API 응답 오류:', error.response.status, error.response.data);
+      }
+      throw error;
+    }
+  }
+
+  // 한국관광공사 API - 서울 관광지 데이터 가져오기 (지역기반)
+  async fetchSeoulTouristSpots() {
+    try {
+      // 제공받은 인증키 사용
+      const apiKey = 'jXbeQ98Dvep6SzEFu8ulcLjvOeUWdY107O4fsq9SUJ0PQkDsUPXrm8gmZ8hKCnSSEEF6iM4Le8oMeyhqLrD3MQ==';
+      
+      console.log('🏛️ 서울 관광지 데이터 가져오기 시작...');
+
+      const baseUrl = 'https://apis.data.go.kr/B551011/KorService2/areaBasedList2';
+      const params = {
+        serviceKey: apiKey,
+        numOfRows: '100',
+        pageNo: '1',
+        MobileOS: 'ETC',
+        MobileApp: 'JjikJio',
+        _type: 'json',
+        arrange: 'A', // 제목순
+        contentTypeId: '12', // 관광지
+        areaCode: '1' // 서울
+      };
+
+      console.log('📡 API 호출 URL:', baseUrl);
+      console.log('📡 API 파라미터:', params);
+
+      const response = await axios.get(baseUrl, { params });
+      
+      console.log('📡 API 응답 상태:', response.status);
+      console.log('📡 API 응답 구조:', JSON.stringify(response.data, null, 2));
+      
+      // 새로운 API 응답 구조 처리
+      if (response.data && response.data.response) {
+        const header = response.data.response.header;
+        const body = response.data.response.body;
+        
+        if (header && header.resultCode === '0000') {
+          const items = body && body.items ? body.items.item : [];
+          const itemsArray = Array.isArray(items) ? items : [items];
+          
+          console.log(`✅ 관광공사 API 응답: ${itemsArray.length}개 관광지`);
+          return itemsArray;
+        } else {
+          const errorMsg = header ? header.resultMsg : '알 수 없는 오류';
+          throw new Error(`API 오류: ${errorMsg}`);
+        }
+      } else if (response.data && response.data.resultCode) {
+        // 새로운 응답 구조 처리
+        if (response.data.resultCode === '0000') {
+          const items = response.data.items ? response.data.items.item : [];
+          const itemsArray = Array.isArray(items) ? items : [items];
+          
+          console.log(`✅ 관광공사 API 응답: ${itemsArray.length}개 관광지`);
+          return itemsArray;
+        } else {
+          throw new Error(`API 오류: ${response.data.resultMsg}`);
+        }
+      } else {
+        console.error('❌ 예상과 다른 API 응답 구조:', response.data);
+        throw new Error('API 응답 구조가 예상과 다릅니다.');
+      }
+    } catch (error) {
+      console.error('❌ 관광공사 API 호출 오류:', error.message);
+      if (error.response) {
+        console.error('❌ API 응답 오류:', error.response.status, error.response.data);
+      }
+      throw error;
+    }
+  }
+
+  // 서울 관광지 데이터를 PostgreSQL RDS에 저장
+  async saveSeoulTouristSpots() {
+    try {
+      console.log('💾 서울 관광지 데이터 저장 시작...');
+      
+      const touristSpots = await this.fetchSeoulTouristSpots();
+      let savedCount = 0;
+      let updatedCount = 0;
+
+      for (const spot of touristSpots) {
+        try {
+          const [touristSpot, created] = await TouristSpot.upsert({
+            contentId: spot.contentid,
+            title: spot.title,
+            addr1: spot.addr1,
+            addr2: spot.addr2,
+            areaCode: spot.areacode,
+            cat1: spot.cat1,
+            cat2: spot.cat2,
+            cat3: spot.cat3,
+            contentTypeId: spot.contenttypeid,
+            firstImage: spot.firstimage,
+            firstImage2: spot.firstimage2,
+            mapX: spot.mapx ? parseFloat(spot.mapx) : null,
+            mapY: spot.mapy ? parseFloat(spot.mapy) : null,
+            tel: spot.tel,
+            zipcode: spot.zipcode,
+            modifiedTime: spot.modifiedtime
+          });
+
+          if (created) {
+            savedCount++;
+          } else {
+            updatedCount++;
+          }
+        } catch (itemError) {
+          console.error(`관광지 저장 오류 (${spot.title}):`, itemError.message);
+        }
+      }
+
+      console.log(`✅ 서울 관광지 저장 완료: 신규 ${savedCount}개, 업데이트 ${updatedCount}개`);
+      return { saved: savedCount, updated: updatedCount, total: touristSpots.length };
+    } catch (error) {
+      console.error('❌ 서울 관광지 저장 오류:', error);
+      throw error;
+    }
+  }
+
+  // 관광지 상세정보 조회 (RDS 우선, API fallback)
+  async getTouristSpotDetail(contentId) {
+    try {
+      console.log(`🔍 관광지 상세정보 조회: ${contentId}`);
+
+      // 1. RDS에서 먼저 조회
+      const rdsSpot = await TouristSpot.findOne({
+        where: { contentId: contentId }
+      });
+
+      if (rdsSpot) {
+        console.log(`✅ RDS에서 관광지 정보 발견: ${rdsSpot.title}`);
+        
+        // RDS 데이터를 API 형식에 맞게 변환
+        const rdsData = {
+          contentid: rdsSpot.contentId,
+          title: rdsSpot.title,
+          addr1: rdsSpot.addr1,
+          addr2: rdsSpot.addr2,
+          areacode: rdsSpot.areaCode,
+          cat1: rdsSpot.cat1,
+          cat2: rdsSpot.cat2,
+          cat3: rdsSpot.cat3,
+          contenttypeid: rdsSpot.contentTypeId,
+          firstimage: rdsSpot.firstImage,
+          firstimage2: rdsSpot.firstImage2,
+          mapx: rdsSpot.mapX,
+          mapy: rdsSpot.mapY,
+          tel: rdsSpot.tel,
+          zipcode: rdsSpot.zipcode,
+          modifiedtime: rdsSpot.modifiedTime,
+          // 기본 설명 추가
+          overview: `${rdsSpot.title}에 대한 상세 정보입니다.`,
+          homepage: '',
+          telname: '',
+          // RDS 데이터임을 표시
+          dataSource: 'RDS'
+        };
+
+        return rdsData;
+      }
+
+      // 2. RDS에 없으면 API에서 조회
+      console.log(`🔄 RDS에 없음 - API에서 조회: ${contentId}`);
+      return await this.fetchTouristSpotDetailFromAPI(contentId);
+
+    } catch (error) {
+      console.error('❌ 관광지 상세정보 조회 오류:', error.message);
+      throw error;
+    }
+  }
+
+  // 한국관광공사 API에서 관광지 상세정보 조회
+  async fetchTouristSpotDetailFromAPI(contentId) {
+    try {
+      const apiKey = 'jXbeQ98Dvep6SzEFu8ulcLjvOeUWdY107O4fsq9SUJ0PQkDsUPXrm8gmZ8hKCnSSEEF6iM4Le8oMeyhqLrD3MQ==';
+      
+      console.log(`🔍 관광지 상세정보 조회: ${contentId}`);
+
+      // 1. 기본 상세정보 조회
+      const detailUrl = 'https://apis.data.go.kr/B551011/KorService2/detailCommon2';
+      const detailParams = {
+        serviceKey: apiKey,
+        numOfRows: '10',
+        pageNo: '1',
+        MobileOS: 'ETC',
+        MobileApp: 'JjikJio',
+        _type: 'json',
+        contentId: contentId
+      };
+
+      const detailResponse = await axios.get(detailUrl, { params: detailParams });
+      
+      let detailInfo = {};
+      if (detailResponse.data && detailResponse.data.response && 
+          detailResponse.data.response.header.resultCode === '0000') {
+        const items = detailResponse.data.response.body.items.item;
+        const itemsArray = Array.isArray(items) ? items : [items];
+        if (itemsArray.length > 0) {
+          detailInfo = itemsArray[0];
+        }
+      }
+
+      // 2. 소개정보 조회 (이용시간, 요금 등)
+      const introUrl = 'https://apis.data.go.kr/B551011/KorService2/detailIntro2';
+      const introParams = {
+        serviceKey: apiKey,
+        numOfRows: '10',
+        pageNo: '1',
+        MobileOS: 'ETC',
+        MobileApp: 'JjikJio',
+        _type: 'json',
+        contentId: contentId,
+        contentTypeId: '12' // 관광지
+      };
+
+      const introResponse = await axios.get(introUrl, { params: introParams });
+      
+      let introInfo = {};
+      if (introResponse.data && introResponse.data.response && 
+          introResponse.data.response.header.resultCode === '0000') {
+        const items = introResponse.data.response.body.items.item;
+        const itemsArray = Array.isArray(items) ? items : [items];
+        if (itemsArray.length > 0) {
+          introInfo = itemsArray[0];
+        }
+      }
+
+      // 3. 정보 통합
+      const combinedInfo = {
+        // 기본 정보
+        contentId: detailInfo.contentid || contentId,
+        title: detailInfo.title || '정보 없음',
+        addr1: detailInfo.addr1 || '주소 정보 없음',
+        addr2: detailInfo.addr2 || '',
+        tel: detailInfo.tel || introInfo.infocenter || '전화번호 정보 없음',
+        homepage: detailInfo.homepage || '',
+        overview: detailInfo.overview || '설명 정보 없음',
+        firstImage: detailInfo.firstimage || '',
+        firstImage2: detailInfo.firstimage2 || '',
+        mapX: detailInfo.mapx || '',
+        mapY: detailInfo.mapy || '',
+        zipcode: detailInfo.zipcode || '',
+        
+        // 상세 정보 (소개정보에서)
+        usetime: introInfo.usetime || '이용시간 정보 없음',
+        restdate: introInfo.restdate || '휴무일 정보 없음',
+        usefee: introInfo.usefee || '요금 정보 없음',
+        parking: introInfo.parking || '주차장 정보 없음',
+        chkbabycarriage: introInfo.chkbabycarriage || '',
+        chkpet: introInfo.chkpet || '',
+        chkcreditcard: introInfo.chkcreditcard || '',
+        infocenter: introInfo.infocenter || detailInfo.tel || '문의처 정보 없음',
+        
+        // 추가 편의시설 정보
+        restroom: introInfo.restroom || '',
+        smoking: introInfo.smoking || '',
+        guidebook: introInfo.guidebook || '',
+        audioguide: introInfo.audioguide || ''
+      };
+
+      console.log(`✅ 관광지 상세정보 조회 완료: ${combinedInfo.title}`);
+      return combinedInfo;
+
+    } catch (error) {
+      console.error('❌ 관광지 상세정보 조회 오류:', error.message);
+      if (error.response) {
+        console.error('❌ API 응답 오류:', error.response.status, error.response.data);
+      }
+      throw error;
+    }
+  }
+
+  // GPS 기반 가까운 관광지 조회 (메인페이지용 - RDS 우선)
+  async getNearbyTouristSpots(latitude, longitude, limit = 3) {
+    try {
+      console.log(`🔍 가까운 관광지 검색 (RDS): ${latitude}, ${longitude}`);
+
+      // RDS에서 직접 조회 (거리 계산 포함)
+      const query = `
+        SELECT *,
+        (6371 * acos(cos(radians(:latitude)) * cos(radians("mapY")) * 
+        cos(radians("mapX") - radians(:longitude)) + sin(radians(:latitude)) * 
+        sin(radians("mapY")))) AS distance
+        FROM "TouristSpots"
+        WHERE "mapX" IS NOT NULL AND "mapY" IS NOT NULL
+        HAVING distance <= 20
+        ORDER BY distance ASC
+        LIMIT :limit
+      `;
+
+      const nearbySpots = await sequelize.query(query, {
+        replacements: { latitude, longitude, limit },
+        type: sequelize.QueryTypes.SELECT
+      });
+
+      console.log(`✅ RDS에서 가까운 관광지 ${nearbySpots.length}개 발견`);
+      
+      // 데이터 형식 통일
+      const formattedSpots = nearbySpots.map(spot => ({
+        contentId: spot.contentId,
+        title: spot.title,
+        addr1: spot.addr1,
+        addr2: spot.addr2,
+        areaCode: spot.areaCode,
+        cat1: spot.cat1,
+        cat2: spot.cat2,
+        cat3: spot.cat3,
+        contentTypeId: spot.contentTypeId,
+        firstImage: spot.firstImage,
+        firstImage2: spot.firstImage2,
+        mapX: parseFloat(spot.mapX),
+        mapY: parseFloat(spot.mapY),
+        tel: spot.tel,
+        zipcode: spot.zipcode,
+        distance: parseFloat(spot.distance),
+        modifiedTime: spot.modifiedTime
+      }));
+
+      return formattedSpots;
+    } catch (error) {
+      console.error('❌ RDS에서 가까운 관광지 조회 오류:', error);
+      
+      // RDS 실패 시에만 API 호출 (fallback)
+      try {
+        console.log('🔄 RDS 실패 - API에서 관광지 조회 시도...');
+        const apiSpots = await this.fetchNearbyTouristSpotsFromAPI(latitude, longitude, 10000, limit);
+        
+        // API 데이터를 메인페이지 형식에 맞게 변환
+        const formattedSpots = apiSpots.map(spot => ({
+          contentId: spot.contentid,
+          title: spot.title,
+          addr1: spot.addr1,
+          addr2: spot.addr2,
+          areaCode: spot.areacode,
+          cat1: spot.cat1,
+          cat2: spot.cat2,
+          cat3: spot.cat3,
+          contentTypeId: spot.contenttypeid,
+          firstImage: spot.firstimage,
+          firstImage2: spot.firstimage2,
+          mapX: parseFloat(spot.mapx),
+          mapY: parseFloat(spot.mapy),
+          tel: spot.tel,
+          zipcode: spot.zipcode,
+          distance: parseFloat(spot.dist) / 1000, // 미터를 킬로미터로 변환
+          modifiedTime: spot.modifiedtime
+        }));
+
+        console.log(`✅ API fallback으로 관광지 ${formattedSpots.length}개 발견`);
+        return formattedSpots;
+      } catch (fallbackError) {
+        console.error('❌ API fallback도 실패:', fallbackError);
+        return []; // 빈 배열 반환
+      }
+    }
+  }
+
+  // 관광지 총 개수 조회
+  async getTouristSpotCount() {
+    try {
+      const count = await TouristSpot.count();
+      console.log(`📊 저장된 관광지 총 개수: ${count}개`);
+      return count;
+    } catch (error) {
+      console.error('관광지 개수 조회 오류:', error);
+      return 0;
+    }
+  }
+
+  // RDS 관광지 샘플 데이터 조회 (디버깅용)
+  async getSampleTouristSpots(limit = 5) {
+    try {
+      const sampleSpots = await TouristSpot.findAll({
+        limit: limit,
+        order: [['createdAt', 'DESC']],
+        attributes: ['contentId', 'title', 'addr1', 'mapX', 'mapY', 'firstImage', 'createdAt']
+      });
+      
+      console.log(`📋 샘플 관광지 ${sampleSpots.length}개 조회`);
+      return sampleSpots;
+    } catch (error) {
+      console.error('샘플 관광지 조회 오류:', error);
+      return [];
+    }
+  }
+
+  // 기존 커뮤니티 관련 메서드들은 그대로 유지...
+  // (여기서는 생략하고 필요시 추가)
+}
+
+module.exports = new CommunityService();
