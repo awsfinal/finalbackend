@@ -614,6 +614,67 @@ function getAddressFromCoordinates(isInside, buildingName) {
 
 // API 라우트들
 
+// 날씨 정보 API
+app.get('/api/weather', async (req, res) => {
+  try {
+    const { lat, lng } = req.query;
+    
+    if (!lat || !lng) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPS 좌표(lat, lng)가 필요합니다.'
+      });
+    }
+
+    console.log(`🌤️ 날씨 정보 요청: ${lat}, ${lng}`);
+    
+    // 간단한 날씨 정보 반환 (실제로는 외부 API 연동 가능)
+    const weatherData = {
+      success: true,
+      data: {
+        location: {
+          lat: parseFloat(lat),
+          lng: parseFloat(lng),
+          address: '서울특별시 중구' // 실제로는 역지오코딩으로 주소 변환
+        },
+        current: {
+          temperature: Math.floor(Math.random() * 15) + 10, // 10-25도 랜덤
+          humidity: Math.floor(Math.random() * 40) + 40, // 40-80% 랜덤
+          weather: ['맑음', '흐림', '비', '눈'][Math.floor(Math.random() * 4)],
+          windSpeed: Math.floor(Math.random() * 10) + 1 // 1-10 m/s
+        },
+        forecast: [
+          {
+            time: '현재',
+            temperature: Math.floor(Math.random() * 15) + 10,
+            weather: '맑음'
+          },
+          {
+            time: '+1시간',
+            temperature: Math.floor(Math.random() * 15) + 10,
+            weather: '흐림'
+          },
+          {
+            time: '+2시간',
+            temperature: Math.floor(Math.random() * 15) + 10,
+            weather: '맑음'
+          }
+        ]
+      },
+      timestamp: new Date().toISOString()
+    };
+
+    res.json(weatherData);
+  } catch (error) {
+    console.error('날씨 정보 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '날씨 정보 조회 중 오류가 발생했습니다.',
+      error: error.message
+    });
+  }
+});
+
 // 위치 확인 API
 app.post('/api/check-location', (req, res) => {
   try {
