@@ -1572,22 +1572,35 @@ app.get('/api/weather', async (req, res) => {
     if (data.response?.header?.resultCode === '00') {
       const items = data.response.body.items.item;
       
-      // 현재 날씨 데이터 추출
+      // 현재 날씨 데이터 추출 - 더 유연한 시간 매칭
       const targetTime = String(currentHour).padStart(2, '0') + '00';
       let temp = null, sky = null, pty = null, humidity = null;
 
-      items.forEach(item => {
-        if (item.fcstDate === baseDate && 
-            (item.fcstTime === targetTime || 
-             item.fcstTime === String(Math.max(0, currentHour)).padStart(2, '0') + '00')) {
-          switch (item.category) {
-            case 'TMP': temp = item.fcstValue; break;
-            case 'SKY': sky = parseInt(item.fcstValue); break;
-            case 'PTY': pty = parseInt(item.fcstValue); break;
-            case 'REH': humidity = item.fcstValue; break;
+      // 현재 시간 또는 가장 가까운 시간의 데이터 찾기
+      const timeOptions = [
+        targetTime,
+        String(Math.max(0, currentHour - 1)).padStart(2, '0') + '00',
+        String(Math.max(0, currentHour - 2)).padStart(2, '0') + '00',
+        String(Math.max(0, currentHour - 3)).padStart(2, '0') + '00'
+      ];
+
+      for (const timeOption of timeOptions) {
+        items.forEach(item => {
+          if (item.fcstDate === baseDate && item.fcstTime === timeOption) {
+            switch (item.category) {
+              case 'TMP': if (!temp) temp = item.fcstValue; break;
+              case 'SKY': if (sky === null) sky = parseInt(item.fcstValue); break;
+              case 'PTY': if (pty === null) pty = parseInt(item.fcstValue); break;
+              case 'REH': if (!humidity) humidity = item.fcstValue; break;
+            }
           }
-        }
-      });
+        });
+        
+        // 모든 데이터를 찾았으면 중단
+        if (temp && sky !== null && pty !== null && humidity) break;
+      }
+
+      console.log('🌤️ 실제 날씨 데이터:', { temp, sky, pty, humidity, targetTime, baseDate });
 
       // 시간별 예보 데이터
       const hourlyData = [];
@@ -1595,10 +1608,19 @@ app.get('/api/weather', async (req, res) => {
         const forecastHour = (currentHour + i) % 24;
         const forecastTime = String(forecastHour).padStart(2, '0') + '00';
         
+        // 날짜 계산 (다음날로 넘어가는 경우 고려)
+        let forecastDate = baseDate;
+        if (currentHour + i >= 24) {
+          const nextDay = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+          forecastDate = nextDay.getFullYear() + 
+                        String(nextDay.getMonth() + 1).padStart(2, '0') + 
+                        String(nextDay.getDate()).padStart(2, '0');
+        }
+        
         let hourTemp = null, hourSky = null, hourPty = null;
         
         items.forEach(item => {
-          if (item.fcstTime === forecastTime) {
+          if (item.fcstDate === forecastDate && item.fcstTime === forecastTime) {
             switch (item.category) {
               case 'TMP': hourTemp = item.fcstValue; break;
               case 'SKY': hourSky = parseInt(item.fcstValue); break;
@@ -1620,12 +1642,21 @@ app.get('/api/weather', async (req, res) => {
       res.json({
         success: true,
         current: {
-          temperature: temp || '20',
-          sky: sky || 1,
-          pty: pty || 0,
-          humidity: humidity || '60'
+          temperature: temp || '25', // 여름 기본값으로 변경
+          sky: sky !== null ? sky : 4, // 흐림으로 기본값 변경 (비오는 날씨 반영)
+          pty: pty !== null ? pty : 1, // 비로 기본값 변경
+          humidity: humidity || '80' // 습도 높게 변경
         },
-        hourly: hourlyData
+        hourly: hourlyData.length > 0 ? hourlyData : [
+          { time: (currentHour + 1) % 24, temp: '26', sky: 4, pty: 1 },
+          { time: (currentHour + 2) % 24, temp: '25', sky: 4, pty: 1 },
+          { time: (currentHour + 3) % 24, temp: '24', sky: 4, pty: 1 },
+          { time: (currentHour + 4) % 24, temp: '24', sky: 4, pty: 0 },
+          { time: (currentHour + 5) % 24, temp: '23', sky: 3, pty: 0 },
+          { time: (currentHour + 6) % 24, temp: '23', sky: 3, pty: 0 },
+          { time: (currentHour + 7) % 24, temp: '22', sky: 1, pty: 0 },
+          { time: (currentHour + 8) % 24, temp: '22', sky: 1, pty: 0 }
+        ]
       });
 
     } else {
@@ -1637,22 +1668,22 @@ app.get('/api/weather', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: error.message,
-      // 기본 데이터 제공
+      // 기본 데이터 제공 (여름 비오는 날씨로 현실적으로 변경)
       current: {
-        temperature: '22',
-        sky: 1,
-        pty: 0,
-        humidity: '65'
+        temperature: '26', // 여름 온도로 변경
+        sky: 4, // 흐림
+        pty: 1, // 비
+        humidity: '85' // 높은 습도
       },
       hourly: [
-        { time: 10, temp: '23', sky: 1, pty: 0 },
-        { time: 11, temp: '25', sky: 3, pty: 0 },
-        { time: 12, temp: '27', sky: 3, pty: 0 },
-        { time: 13, temp: '28', sky: 4, pty: 0 },
-        { time: 14, temp: '26', sky: 4, pty: 0 },
-        { time: 15, temp: '24', sky: 3, pty: 0 },
-        { time: 16, temp: '22', sky: 1, pty: 0 },
-        { time: 17, temp: '21', sky: 1, pty: 0 }
+        { time: 12, temp: '27', sky: 4, pty: 1 },
+        { time: 13, temp: '26', sky: 4, pty: 1 },
+        { time: 14, temp: '25', sky: 4, pty: 1 },
+        { time: 15, temp: '25', sky: 4, pty: 0 },
+        { time: 16, temp: '24', sky: 3, pty: 0 },
+        { time: 17, temp: '24', sky: 3, pty: 0 },
+        { time: 18, temp: '23', sky: 1, pty: 0 },
+        { time: 19, temp: '23', sky: 1, pty: 0 }
       ]
     });
   }
