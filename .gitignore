@@ -129,3 +129,7 @@ Thumbs.db
 # Uploads
 uploads/
 public/uploads/
+
+# Environment variables
+.env
+backend.log
