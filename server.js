@@ -6,6 +6,7 @@ const path = require('path');
 const axios = require('axios');
 const BedrockService = require('./services/bedrockService');
 const { Sequelize } = require('sequelize');
+const { TouristSpot } = require('./models/database');
 
 const app = express();
 const PORT = process.env.PORT || 5006;
@@ -1722,6 +1723,372 @@ app.post('/api/tourist-spots/init', async (req, res) => {
   }
 });
 
+// 찍고갈래 페이지용 체험관 데이터 조회
+app.get('/api/stamp/experience-centers', async (req, res) => {
+  try {
+    const { latitude, longitude, limit = 30 } = req.query;
+    
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPS 좌표가 필요합니다.'
+      });
+    }
+
+    console.log(`🎯 찍고갈래 체험관 조회: ${latitude}, ${longitude}, limit: ${limit}`);
+    
+    // 체험관 관련 카테고리 필터링 (직접 쿼리 실행)
+    const categories = ['체험관', '박물관', '전시관', '문화센터', '교육시설'];
+    const categoryConditions = categories.map((_, index) => `"spot_category" ILIKE :category${index}`).join(' OR ');
+    const replacements = { 
+      latitude: parseFloat(latitude), 
+      longitude: parseFloat(longitude), 
+      limit: parseInt(limit) 
+    };
+    categories.forEach((cat, index) => {
+      replacements[`category${index}`] = `%${cat}%`;
+    });
+
+    const query = `
+      SELECT 
+        *,
+        (
+          6371 * acos(
+            cos(radians(:latitude)) * 
+            cos(radians("latitude")) * 
+            cos(radians("longitude") - radians(:longitude)) + 
+            sin(radians(:latitude)) * 
+            sin(radians("latitude"))
+          )
+        ) AS distance
+      FROM "TouristSpots"
+      WHERE "longitude" IS NOT NULL 
+        AND "latitude" IS NOT NULL
+        AND (${categoryConditions})
+        AND (
+          6371 * acos(
+            cos(radians(:latitude)) * 
+            cos(radians("latitude")) * 
+            cos(radians("longitude") - radians(:longitude)) + 
+            sin(radians(:latitude)) * 
+            sin(radians("latitude"))
+          )
+        ) <= 50
+      ORDER BY distance
+      LIMIT :limit
+    `;
+
+    const [experienceSpots] = await sequelize.query(query, {
+      replacements
+    });
+
+    console.log(`✅ 체험관 관련 관광지 ${experienceSpots.length}개 발견`);
+
+    // 찍고갈래 페이지 형식으로 데이터 변환
+    const stampData = experienceSpots.map(spot => ({
+      id: spot.content_id || spot.id,
+      name: spot.title,
+      nameEn: spot.title,
+      lat: parseFloat(spot.latitude),
+      lng: parseFloat(spot.longitude),
+      description: spot.overview ? spot.overview.substring(0, 100) + '...' : '체험관 정보',
+      popular: true,
+      image: spot.image_url || '/image/default-tourist-spot.jpg',
+      rating: generateRating(spot),
+      reviews: generateReviews(spot),
+      address: spot.address || '',
+      tel: spot.tel || '',
+      homepage: spot.homepage || '',
+      distance: spot.distance || 0,
+      area_name: spot.area_name || '서울',
+      spot_category: spot.spot_category || '체험관'
+    }));
+
+    res.json({
+      success: true,
+      message: '찍고갈래 체험관 데이터 조회 완료',
+      data: stampData,
+      count: stampData.length,
+      source: 'RDS TouristSpots (Experience Centers)'
+    });
+  } catch (error) {
+    console.error('찍고갈래 체험관 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '찍고갈래 체험관 조회 실패',
+      error: error.message
+    });
+  }
+});
+
+// 찍고갈래 페이지용 유네스코 데이터 조회
+app.get('/api/stamp/unesco-sites', async (req, res) => {
+  try {
+    const { latitude, longitude, limit = 50 } = req.query;
+    
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPS 좌표가 필요합니다.'
+      });
+    }
+
+    console.log(`🎯 찍고갈래 유네스코 조회: ${latitude}, ${longitude}, limit: ${limit}`);
+    
+    // 유네스코 사이트만 조회
+    const unescoSpots = await communityService.getUnescoSites(
+      parseFloat(latitude), 
+      parseFloat(longitude), 
+      parseInt(limit)
+    );
+
+    // 찍고갈래 페이지 형식으로 데이터 변환
+    const stampData = unescoSpots.map(spot => ({
+      id: spot.content_id || spot.id,
+      name: spot.title,
+      nameEn: spot.title,
+      lat: parseFloat(spot.latitude),
+      lng: parseFloat(spot.longitude),
+      description: spot.overview ? spot.overview.substring(0, 100) + '...' : '유네스코 세계유산',
+      popular: true,
+      image: spot.image_url || '/image/default-tourist-spot.jpg',
+      rating: generateRating(spot, true), // 유네스코는 높은 평점
+      reviews: generateReviews(spot, true),
+      address: spot.address || '',
+      tel: spot.tel || '',
+      homepage: spot.homepage || '',
+      distance: spot.distance || 0,
+      area_name: spot.area_name || '서울',
+      spot_category: spot.spot_category || '유네스코 세계유산',
+      unesco: true
+    }));
+
+    res.json({
+      success: true,
+      message: '찍고갈래 유네스코 데이터 조회 완료',
+      data: stampData,
+      count: stampData.length,
+      source: 'RDS TouristSpots (UNESCO Sites)'
+    });
+  } catch (error) {
+    console.error('찍고갈래 유네스코 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '찍고갈래 유네스코 조회 실패',
+      error: error.message
+    });
+  }
+});
+
+// 평점 생성 함수 (관광지 특성 기반)
+function generateRating(spot, isUnesco = false) {
+  let baseRating = 4.0;
+  
+  // 유네스코 사이트는 높은 평점
+  if (isUnesco || spot.unesco) {
+    baseRating = 4.5;
+  }
+  
+  // 제목 길이 기반 (유명한 곳일수록 이름이 길 수 있음)
+  if (spot.title && spot.title.length > 10) {
+    baseRating += 0.1;
+  }
+  
+  // 개요가 있으면 평점 상승
+  if (spot.overview && spot.overview.length > 100) {
+    baseRating += 0.2;
+  }
+  
+  // 이미지가 있으면 평점 상승
+  if (spot.image_url) {
+    baseRating += 0.1;
+  }
+  
+  // 연락처가 있으면 평점 상승
+  if (spot.tel) {
+    baseRating += 0.1;
+  }
+  
+  // 랜덤 요소 추가
+  const randomFactor = Math.random() * 0.3;
+  
+  return Math.min(5.0, baseRating + randomFactor);
+}
+
+// 리뷰 수 생성 함수
+function generateReviews(spot, isUnesco = false) {
+  let baseReviews = 1000;
+  
+  // 유네스코 사이트는 많은 리뷰
+  if (isUnesco || spot.unesco) {
+    baseReviews = 5000;
+  }
+  
+  // 제목 길이 기반
+  if (spot.title && spot.title.length > 10) {
+    baseReviews += 2000;
+  }
+  
+  // 개요가 있으면 리뷰 증가
+  if (spot.overview && spot.overview.length > 100) {
+    baseReviews += 3000;
+  }
+  
+  // 랜덤 요소 추가
+  const randomFactor = Math.floor(Math.random() * 5000);
+  
+  return baseReviews + randomFactor;
+}
+
+// 찍고갈래 페이지용 관광지 데이터 조회 (더 많은 데이터)
+app.get('/api/stamp/tourist-spots', async (req, res) => {
+  try {
+    const { latitude, longitude, limit = 50 } = req.query;
+    
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPS 좌표가 필요합니다.'
+      });
+    }
+
+    console.log(`🎯 찍고갈래 관광지 조회: ${latitude}, ${longitude}, limit: ${limit}`);
+    
+    const nearbySpots = await communityService.getNearbyTouristSpots(
+      parseFloat(latitude), 
+      parseFloat(longitude), 
+      parseInt(limit)
+    );
+
+    // 찍고갈래 페이지 형식으로 데이터 변환
+    const stampData = nearbySpots.map(spot => {
+      // content_id를 우선적으로 사용, 없으면 id 사용
+      const spotId = spot.content_id || spot.id;
+      
+      console.log(`🔍 ID 매핑: content_id=${spot.content_id}, id=${spot.id} → 사용=${spotId}`);
+      
+      return {
+        id: spotId,
+        content_id: spot.content_id, // content_id 필드 추가
+        name: spot.title,
+        nameEn: spot.title,
+        lat: parseFloat(spot.latitude),
+        lng: parseFloat(spot.longitude),
+        description: spot.overview ? spot.overview.substring(0, 100) + '...' : '관광지 정보',
+        popular: true,
+        image: spot.image_url || '/image/default-tourist-spot.jpg',
+        rating: generateRating(spot),
+        reviews: generateReviews(spot),
+        address: spot.address || '',
+        tel: spot.tel || '',
+        homepage: spot.homepage || '',
+        distance: spot.distance || 0,
+        area_name: spot.area_name || '서울',
+        spot_category: spot.spot_category || '관광지',
+        area_code: spot.area_code || null,
+        unesco: spot.unesco || false
+      };
+    });
+
+    res.json({
+      success: true,
+      message: '찍고갈래 관광지 데이터 조회 완료',
+      data: stampData,
+      count: stampData.length,
+      source: 'RDS TouristSpots'
+    });
+  } catch (error) {
+    console.error('찍고갈래 관광지 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '찍고갈래 관광지 조회 실패',
+      error: error.message
+    });
+  }
+});
+
+// UNESCO 사이트 전용 API
+app.get('/api/stamp/unesco-spots', async (req, res) => {
+  try {
+    const { latitude, longitude, limit = 50 } = req.query;
+    
+    console.log(`🏛️ UNESCO 사이트 조회: ${latitude}, ${longitude}, limit: ${limit}`);
+    
+    // RDS에서 UNESCO=true인 데이터만 조회
+    const query = `
+      SELECT 
+        *,
+        (
+          6371 * acos(
+            cos(radians(:latitude)) * 
+            cos(radians("latitude")) * 
+            cos(radians("longitude") - radians(:longitude)) + 
+            sin(radians(:latitude)) * 
+            sin(radians("latitude"))
+          )
+        ) AS distance
+      FROM "TouristSpots"
+      WHERE "longitude" IS NOT NULL 
+        AND "latitude" IS NOT NULL
+        AND "unesco" = true
+      ORDER BY distance
+      LIMIT :limit
+    `;
+
+    const [results] = await sequelize.query(query, {
+      replacements: { 
+        latitude: parseFloat(latitude), 
+        longitude: parseFloat(longitude), 
+        limit: parseInt(limit) 
+      }
+    });
+
+    // 찍고갈래 페이지 형식으로 데이터 변환
+    const unescoData = results.map(spot => {
+      // 원본 ID 사용 (패딩 제거)
+      const spotId = spot.content_id || spot.id;
+      
+      console.log(`🏛️ UNESCO ID 사용: 원본=${spot.content_id || spot.id} → 사용=${spotId}`);
+      
+      return {
+        id: spotId,
+        name: spot.title,
+        nameEn: spot.title,
+        lat: parseFloat(spot.latitude),
+        lng: parseFloat(spot.longitude),
+        description: spot.overview ? spot.overview.substring(0, 100) + '...' : 'UNESCO 세계유산',
+        popular: true,
+        image: spot.image_url || '/image/default-tourist-spot.jpg',
+        rating: generateRating(spot),
+        reviews: generateReviews(spot),
+        address: spot.address || '',
+        tel: spot.tel || '',
+        homepage: spot.homepage || '',
+        distance: spot.distance || 0,
+        area_name: spot.area_name || '서울',
+        spot_category: spot.spot_category || '문화재',
+        area_code: spot.area_code || null,
+        unesco: true
+      };
+    });
+
+    res.json({
+      success: true,
+      message: 'UNESCO 사이트 조회 완료',
+      data: unescoData,
+      count: unescoData.length,
+      source: 'RDS UNESCO Sites'
+    });
+  } catch (error) {
+    console.error('UNESCO 사이트 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: 'UNESCO 사이트 조회 실패',
+      error: error.message
+    });
+  }
+});
+
 // GPS 기반 가까운 관광지 조회 (메인 페이지용)
 app.get('/api/tourist-spots/nearby', async (req, res) => {
   try {
@@ -1772,13 +2139,24 @@ app.get('/api/tourist-spots/:contentId', async (req, res) => {
 
     console.log(`🔍 관광지 상세 정보 조회: ${contentId}`);
     
-    // communityService를 통해 상세정보 조회
-    const detailInfo = await communityService.getTouristSpotDetail(contentId);
+    // 직접 데이터베이스에서 조회
+    const spot = await TouristSpot.findOne({
+      where: { content_id: contentId }
+    });
+
+    if (!spot) {
+      return res.status(404).json({
+        success: false,
+        message: '관광지를 찾을 수 없습니다.'
+      });
+    }
+
+    console.log(`✅ 관광지 상세 정보 조회 완료: ${spot.title}`);
 
     res.json({
       success: true,
       message: '관광지 상세정보 조회 완료',
-      data: detailInfo
+      data: spot
     });
   } catch (error) {
     console.error('관광지 상세정보 조회 오류:', error);

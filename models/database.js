@@ -174,7 +174,7 @@ const Like = sequelize.define('Like', {
   ]
 });
 
-// 관광지 정보 모델 (기존 RDS 테이블과 연동)
+// 관광지 정보 모델 (실제 RDS 테이블과 연동)
 const TouristSpot = sequelize.define('TouristSpot', {
   id: {
     type: DataTypes.INTEGER,
@@ -254,34 +254,27 @@ const TouristSpot = sequelize.define('TouristSpot', {
     type: DataTypes.TEXT,
     allowNull: true
   },
-  heritage_type: {
-    type: DataTypes.STRING(50),
-    allowNull: true
-  },
-  fee_type: {
-    type: DataTypes.STRING(20),
-    allowNull: true
-  },
-  usage_fee: {
-    type: DataTypes.TEXT,
-    allowNull: true
+  unesco: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true,
+    defaultValue: false
   }
 }, {
-  tableName: 'simple_tourist_spots',
+  tableName: 'TouristSpots',
   timestamps: true,
   createdAt: 'created_at',
   updatedAt: false, // updated_at 컬럼 없음
   indexes: [
     {
-      name: 'idx_simple_content_id',
+      name: 'idx_content_id',
       fields: ['content_id']
     },
     {
-      name: 'idx_simple_location',
+      name: 'idx_location',
       fields: ['longitude', 'latitude']
     },
     {
-      name: 'idx_simple_area',
+      name: 'idx_area',
       fields: ['area_code']
     }
   ]
@@ -332,13 +325,13 @@ async function getTouristSpots(latitude, longitude, limit = 10) {
         id, content_id, title, address, longitude, latitude,
         image_url, area_code, area_name, spot_category, tel,
         zipcode, homepage, info_center, rest_date, use_time,
-        parking, facilities, overview, heritage_type, fee_type, usage_fee,
+        parking, facilities, overview,
         created_at,
         ST_Distance(
           ST_Point(longitude, latitude)::geography,
           ST_Point($1, $2)::geography
         ) as distance
-      FROM simple_tourist_spots
+      FROM "TouristSpots"
       WHERE ST_DWithin(
         ST_Point(longitude, latitude)::geography,
         ST_Point($1, $2)::geography,

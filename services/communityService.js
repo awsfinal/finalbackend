@@ -71,26 +71,40 @@ class CommunityService {
       
       const query = `
         SELECT 
-          *,
+          id,
+          content_id,
+          title,
+          overview,
+          address,
+          latitude,
+          longitude,
+          image_url,
+          tel,
+          homepage,
+          area_name,
+          spot_category,
+          area_code,
+          unesco,
           (
             6371 * acos(
               cos(radians(:latitude)) * 
-              cos(radians("mapY")) * 
-              cos(radians("mapX") - radians(:longitude)) + 
+              cos(radians("latitude")) * 
+              cos(radians("longitude") - radians(:longitude)) + 
               sin(radians(:latitude)) * 
-              sin(radians("mapY"))
+              sin(radians("latitude"))
             )
           ) AS distance
         FROM "TouristSpots"
-        WHERE "mapX" IS NOT NULL 
-          AND "mapY" IS NOT NULL
+        WHERE "longitude" IS NOT NULL 
+          AND "latitude" IS NOT NULL
+          AND "content_id" IS NOT NULL
           AND (
             6371 * acos(
               cos(radians(:latitude)) * 
-              cos(radians("mapY")) * 
-              cos(radians("mapX") - radians(:longitude)) + 
+              cos(radians("latitude")) * 
+              cos(radians("longitude") - radians(:longitude)) + 
               sin(radians(:latitude)) * 
-              sin(radians("mapY"))
+              sin(radians("latitude"))
             )
           ) <= 20
         ORDER BY distance
@@ -273,6 +287,28 @@ class CommunityService {
       }
     } catch (error) {
       console.error('❌ 좋아요 토글 오류:', error);
+      throw error;
+    }
+  }
+
+  // 관광지 상세 정보 조회
+  async getTouristSpotDetail(contentId) {
+    try {
+      console.log(`🔍 관광지 상세 정보 조회: ${contentId}`);
+      
+      const spot = await this.TouristSpot.findOne({
+        where: { content_id: contentId }
+      });
+
+      if (!spot) {
+        console.log('❌ 관광지를 찾을 수 없습니다');
+        return null;
+      }
+
+      console.log(`✅ 관광지 상세 정보 조회 완료: ${spot.title}`);
+      return spot;
+    } catch (error) {
+      console.error('관광지 상세 정보 조회 오류:', error);
       throw error;
     }
   }
