@@ -6,9 +6,59 @@ const path = require('path');
 const axios = require('axios');
 const BedrockService = require('./services/bedrockService');
 const { Sequelize } = require('sequelize');
+const { TouristSpot } = require('./models/database');
+const { google } = require('googleapis');
+const jwt = require('jsonwebtoken');
+const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 
 const app = express();
 const PORT = process.env.PORT || 5006;
+
+// AWS Secrets Manager 클라이언트 설정
+const secretsClient = new SecretsManagerClient({
+  region: "ap-northeast-1",
+});
+
+// Google OAuth 설정 (Secrets Manager에서 가져올 예정)
+let oauth2Client;
+let oauthSecrets = {};
+
+// Secrets Manager에서 OAuth 설정 가져오기
+async function loadOAuthSecrets() {
+  try {
+    const response = await secretsClient.send(
+      new GetSecretValueCommand({
+        SecretId: "jjikgeo/oauth",
+        VersionStage: "AWSCURRENT",
+      })
+    );
+    
+    oauthSecrets = JSON.parse(response.SecretString);
+    
+    // Google OAuth 클라이언트 초기화
+    oauth2Client = new google.auth.OAuth2(
+      oauthSecrets.GOOGLE_CLIENT_ID,
+      oauthSecrets.GOOGLE_CLIENT_SECRET,
+      'https://www.jjikgeo.com/api/auth/google/callback'
+    );
+    
+    console.log('✅ Google OAuth 설정 로드 완료');
+  } catch (error) {
+    console.error('❌ OAuth Secrets 로드 실패:', error);
+    // 환경변수 fallback
+    oauthSecrets = {
+      GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || 'fallback-client-id',
+      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || 'fallback-secret',
+      JWT_SECRET: process.env.JWT_SECRET || 'fallback-jwt-secret'
+    };
+    
+    oauth2Client = new google.auth.OAuth2(
+      oauthSecrets.GOOGLE_CLIENT_ID,
+      oauthSecrets.GOOGLE_CLIENT_SECRET,
+      'https://www.jjikgeo.com/api/auth/google/callback'
+    );
+  }
+}
 
 // RDS 연결 설정 (PostgreSQL)
 const sequelize = new Sequelize(
@@ -1855,6 +1905,256 @@ app.get('/api/community/debug', async (req, res) => {
   }
 });
 
+// ==================== Google OAuth API ====================
+
+// Google OAuth 로그인 URL 생성
+app.get('/api/auth/google', (req, res) => {
+  try {
+    const scopes = [
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile'
+    ];
+
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: scopes,
+      include_granted_scopes: true
+    });
+
+    res.json({
+      success: true,
+      authUrl: authUrl
+    });
+  } catch (error) {
+    console.error('Google OAuth URL 생성 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: 'OAuth URL 생성 실패',
+      error: error.message
+    });
+  }
+});
+
+// Google OAuth 콜백 처리
+app.get('/api/auth/google/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        message: '인증 코드가 없습니다.'
+      });
+    }
+
+    // 토큰 교환
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    // 사용자 정보 가져오기
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const userInfo = await oauth2.userinfo.get();
+
+    // JWT 토큰 생성
+    const jwtToken = jwt.sign(
+      {
+        id: userInfo.data.id,
+        email: userInfo.data.email,
+        name: userInfo.data.name,
+        picture: userInfo.data.picture
+      },
+      process.env.JWT_SECRET || 'fallback-secret',
+      { expiresIn: '7d' }
+    );
+
+    // 프론트엔드로 리다이렉트 (토큰과 함께)
+    res.redirect(`https://www.jjikgeo.com/auth/success?token=${jwtToken}`);
+    
+  } catch (error) {
+    console.error('Google OAuth 콜백 오류:', error);
+    res.redirect(`https://www.jjikgeo.com/auth/error?message=${encodeURIComponent(error.message)}`);
+  }
+});
+
+// JWT 토큰 검증
+app.get('/api/auth/verify', (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: '토큰이 없습니다.'
+      });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
+    
+    res.json({
+      success: true,
+      user: decoded
+    });
+    
+  } catch (error) {
+    console.error('JWT 토큰 검증 오류:', error);
+    res.status(401).json({
+      success: false,
+      message: '유효하지 않은 토큰입니다.',
+      error: error.message
+    });
+  }
+});
+
+// 로그아웃
+app.post('/api/auth/logout', (req, res) => {
+  try {
+    // 클라이언트에서 토큰을 삭제하도록 안내
+    res.json({
+      success: true,
+      message: '로그아웃되었습니다.'
+    });
+  } catch (error) {
+    console.error('로그아웃 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '로그아웃 실패',
+      error: error.message
+    });
+  }
+});
+
+// ==================== Google OAuth API ====================
+
+// Google OAuth 로그인 URL 생성
+app.get('/api/auth/google', (req, res) => {
+  try {
+    if (!oauth2Client) {
+      return res.status(500).json({
+        success: false,
+        message: 'OAuth 클라이언트가 초기화되지 않았습니다.'
+      });
+    }
+
+    const scopes = [
+      'https://www.googleapis.com/auth/userinfo.email',
+      'https://www.googleapis.com/auth/userinfo.profile'
+    ];
+
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: scopes,
+      include_granted_scopes: true
+    });
+
+    res.json({
+      success: true,
+      authUrl: authUrl
+    });
+  } catch (error) {
+    console.error('Google OAuth URL 생성 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: 'OAuth URL 생성 실패',
+      error: error.message
+    });
+  }
+});
+
+// Google OAuth 콜백 처리
+app.get('/api/auth/google/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        message: '인증 코드가 없습니다.'
+      });
+    }
+
+    if (!oauth2Client) {
+      return res.status(500).json({
+        success: false,
+        message: 'OAuth 클라이언트가 초기화되지 않았습니다.'
+      });
+    }
+
+    // 토큰 교환
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    // 사용자 정보 가져오기
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const userInfo = await oauth2.userinfo.get();
+
+    // JWT 토큰 생성
+    const jwtToken = jwt.sign(
+      {
+        id: userInfo.data.id,
+        email: userInfo.data.email,
+        name: userInfo.data.name,
+        picture: userInfo.data.picture
+      },
+      oauthSecrets.JWT_SECRET || 'fallback-secret',
+      { expiresIn: '7d' }
+    );
+
+    // 프론트엔드로 리다이렉트 (토큰과 함께)
+    res.redirect(`https://www.jjikgeo.com/auth/success?token=${jwtToken}`);
+    
+  } catch (error) {
+    console.error('Google OAuth 콜백 오류:', error);
+    res.redirect(`https://www.jjikgeo.com/auth/error?message=${encodeURIComponent(error.message)}`);
+  }
+});
+
+// JWT 토큰 검증
+app.get('/api/auth/verify', (req, res) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: '토큰이 없습니다.'
+      });
+    }
+
+    const decoded = jwt.verify(token, oauthSecrets.JWT_SECRET || 'fallback-secret');
+    
+    res.json({
+      success: true,
+      user: decoded
+    });
+    
+  } catch (error) {
+    console.error('JWT 토큰 검증 오류:', error);
+    res.status(401).json({
+      success: false,
+      message: '유효하지 않은 토큰입니다.',
+      error: error.message
+    });
+  }
+});
+
+// 로그아웃
+app.post('/api/auth/logout', (req, res) => {
+  try {
+    // 클라이언트에서 토큰을 삭제하도록 안내
+    res.json({
+      success: true,
+      message: '로그아웃되었습니다.'
+    });
+  } catch (error) {
+    console.error('로그아웃 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '로그아웃 실패',
+      error: error.message
+    });
+  }
+});
+
 // 서버 시작
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`경복궁 건물 인식 API 서버가 포트 ${PORT}에서 실행 중입니다.`);
@@ -1872,6 +2172,10 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`- POST /api/community/comments : 댓글 작성`);
   console.log(`- POST /api/community/like/:postId : 좋아요 토글`);
   console.log(`- GET /api/community/stats/:boardId : 게시판 통계`);
+  console.log(`- GET /api/auth/google : Google OAuth 로그인 URL 생성`);
+  console.log(`- GET /api/auth/google/callback : Google OAuth 콜백`);
+  console.log(`- GET /api/auth/verify : JWT 토큰 검증`);
+  console.log(`- POST /api/auth/logout : 로그아웃`);
 
   // PostgreSQL RDS 연결 테스트
   console.log('\n=== PostgreSQL RDS 연결 테스트 ===');
@@ -1927,6 +2231,429 @@ app.post('/api/tourist-spots/init', async (req, res) => {
   }
 });
 
+// 찍고갈래 페이지용 체험관 데이터 조회
+app.get('/api/stamp/experience-centers', async (req, res) => {
+  try {
+    const { latitude, longitude, limit = 30 } = req.query;
+    
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPS 좌표가 필요합니다.'
+      });
+    }
+
+    console.log(`🎯 찍고갈래 체험관 조회: ${latitude}, ${longitude}, limit: ${limit}`);
+    
+    // 체험관 관련 카테고리 필터링 (직접 쿼리 실행)
+    const categories = ['체험관', '박물관', '전시관', '문화센터', '교육시설'];
+    const categoryConditions = categories.map((_, index) => `"spot_category" ILIKE :category${index}`).join(' OR ');
+    const replacements = { 
+      latitude: parseFloat(latitude), 
+      longitude: parseFloat(longitude), 
+      limit: parseInt(limit) 
+    };
+    categories.forEach((cat, index) => {
+      replacements[`category${index}`] = `%${cat}%`;
+    });
+
+    const query = `
+      SELECT 
+        *,
+        (
+          6371 * acos(
+            cos(radians(:latitude)) * 
+            cos(radians("latitude")) * 
+            cos(radians("longitude") - radians(:longitude)) + 
+            sin(radians(:latitude)) * 
+            sin(radians("latitude"))
+          )
+        ) AS distance
+      FROM "TouristSpots"
+      WHERE "longitude" IS NOT NULL 
+        AND "latitude" IS NOT NULL
+        AND (${categoryConditions})
+        AND (
+          6371 * acos(
+            cos(radians(:latitude)) * 
+            cos(radians("latitude")) * 
+            cos(radians("longitude") - radians(:longitude)) + 
+            sin(radians(:latitude)) * 
+            sin(radians("latitude"))
+          )
+        ) <= 50
+      ORDER BY distance
+      LIMIT :limit
+    `;
+
+    const [experienceSpots] = await sequelize.query(query, {
+      replacements
+    });
+
+    console.log(`✅ 체험관 관련 관광지 ${experienceSpots.length}개 발견`);
+
+    // 찍고갈래 페이지 형식으로 데이터 변환
+    const stampData = experienceSpots.map(spot => ({
+      id: spot.content_id || spot.id,
+      name: spot.title,
+      nameEn: spot.title,
+      lat: parseFloat(spot.latitude),
+      lng: parseFloat(spot.longitude),
+      description: spot.overview ? spot.overview.substring(0, 100) + '...' : '체험관 정보',
+      popular: true,
+      image: spot.image_url || '/image/default-tourist-spot.jpg',
+      rating: generateRating(spot),
+      reviews: generateReviews(spot),
+      address: spot.address || '',
+      tel: spot.tel || '',
+      homepage: spot.homepage || '',
+      distance: spot.distance || 0,
+      area_name: spot.area_name || '서울',
+      spot_category: spot.spot_category || '체험관'
+    }));
+
+    res.json({
+      success: true,
+      message: '찍고갈래 체험관 데이터 조회 완료',
+      data: stampData,
+      count: stampData.length,
+      source: 'RDS TouristSpots (Experience Centers)'
+    });
+  } catch (error) {
+    console.error('찍고갈래 체험관 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '찍고갈래 체험관 조회 실패',
+      error: error.message
+    });
+  }
+});
+
+// 찍고갈래 페이지용 유네스코 데이터 조회
+app.get('/api/stamp/unesco-sites', async (req, res) => {
+  try {
+    const { latitude, longitude, limit = 50 } = req.query;
+    
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPS 좌표가 필요합니다.'
+      });
+    }
+
+    console.log(`🎯 찍고갈래 유네스코 조회: ${latitude}, ${longitude}, limit: ${limit}`);
+    
+    // 유네스코 사이트만 조회
+    const unescoSpots = await communityService.getUnescoSites(
+      parseFloat(latitude), 
+      parseFloat(longitude), 
+      parseInt(limit)
+    );
+
+    // 찍고갈래 페이지 형식으로 데이터 변환
+    const stampData = unescoSpots.map(spot => ({
+      id: spot.content_id || spot.id,
+      name: spot.title,
+      nameEn: spot.title,
+      lat: parseFloat(spot.latitude),
+      lng: parseFloat(spot.longitude),
+      description: spot.overview ? spot.overview.substring(0, 100) + '...' : '유네스코 세계유산',
+      popular: true,
+      image: spot.image_url || '/image/default-tourist-spot.jpg',
+      rating: generateRating(spot, true), // 유네스코는 높은 평점
+      reviews: generateReviews(spot, true),
+      address: spot.address || '',
+      tel: spot.tel || '',
+      homepage: spot.homepage || '',
+      distance: spot.distance || 0,
+      area_name: spot.area_name || '서울',
+      spot_category: spot.spot_category || '유네스코 세계유산',
+      unesco: true
+    }));
+
+    res.json({
+      success: true,
+      message: '찍고갈래 유네스코 데이터 조회 완료',
+      data: stampData,
+      count: stampData.length,
+      source: 'RDS TouristSpots (UNESCO Sites)'
+    });
+  } catch (error) {
+    console.error('찍고갈래 유네스코 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '찍고갈래 유네스코 조회 실패',
+      error: error.message
+    });
+  }
+});
+
+// 평점 생성 함수 (관광지 특성 기반)
+function generateRating(spot, isUnesco = false) {
+  let baseRating = 4.0;
+  
+  // 유네스코 사이트는 높은 평점
+  if (isUnesco || spot.unesco) {
+    baseRating = 4.5;
+  }
+  
+  // 제목 길이 기반 (유명한 곳일수록 이름이 길 수 있음)
+  if (spot.title && spot.title.length > 10) {
+    baseRating += 0.1;
+  }
+  
+  // 개요가 있으면 평점 상승
+  if (spot.overview && spot.overview.length > 100) {
+    baseRating += 0.2;
+  }
+  
+  // 이미지가 있으면 평점 상승
+  if (spot.image_url) {
+    baseRating += 0.1;
+  }
+  
+  // 연락처가 있으면 평점 상승
+  if (spot.tel) {
+    baseRating += 0.1;
+  }
+  
+  // 랜덤 요소 추가
+  const randomFactor = Math.random() * 0.3;
+  
+  return Math.min(5.0, baseRating + randomFactor);
+}
+
+// 리뷰 수 생성 함수
+function generateReviews(spot, isUnesco = false) {
+  let baseReviews = 1000;
+  
+  // 유네스코 사이트는 많은 리뷰
+  if (isUnesco || spot.unesco) {
+    baseReviews = 5000;
+  }
+  
+  // 제목 길이 기반
+  if (spot.title && spot.title.length > 10) {
+    baseReviews += 2000;
+  }
+  
+  // 개요가 있으면 리뷰 증가
+  if (spot.overview && spot.overview.length > 100) {
+    baseReviews += 3000;
+  }
+  
+  // 랜덤 요소 추가
+  const randomFactor = Math.floor(Math.random() * 5000);
+  
+  return baseReviews + randomFactor;
+}
+
+// 찍고갈래 페이지용 관광지 데이터 조회 (더 많은 데이터)
+app.get('/api/stamp/tourist-spots', async (req, res) => {
+  try {
+    const { latitude, longitude, limit = 50, category } = req.query;
+    
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPS 좌표가 필요합니다.'
+      });
+    }
+
+    console.log(`🎯 찍고갈래 관광지 조회: ${latitude}, ${longitude}, limit: ${limit}, category: ${category}`);
+    
+    const nearbySpots = await communityService.getNearbyTouristSpotsByCategory(
+      parseFloat(latitude), 
+      parseFloat(longitude), 
+      parseInt(limit),
+      category
+    );
+
+    // 찍고갈래 페이지 형식으로 데이터 변환
+    const stampData = nearbySpots.map(spot => {
+      // content_id를 우선적으로 사용, 없으면 id 사용
+      const spotId = spot.content_id || spot.id;
+      
+      console.log(`🔍 ID 매핑: content_id=${spot.content_id}, id=${spot.id} → 사용=${spotId}`);
+      
+      return {
+        id: spotId,
+        content_id: spot.content_id, // content_id 필드 추가
+        name: spot.title,
+        title: spot.title,
+        nameEn: spot.title,
+        lat: parseFloat(spot.latitude),
+        lng: parseFloat(spot.longitude),
+        latitude: parseFloat(spot.latitude),
+        longitude: parseFloat(spot.longitude),
+        description: spot.overview ? spot.overview.substring(0, 100) + '...' : '관광지 정보',
+        overview: spot.overview || '상세 정보가 없습니다.',
+        popular: true,
+        image: spot.image_url || '/image/default-tourist-spot.jpg',
+        image_url: spot.image_url || '/image/default-tourist-spot.jpg',
+        rating: generateRating(spot),
+        reviews: generateReviews(spot),
+        address: spot.address || '',
+        tel: spot.tel || '',
+        homepage: spot.homepage || '',
+        distance: spot.distance || 0,
+        area_name: spot.area_name || '서울',
+        spot_category: spot.spot_category || '관광지',
+        area_code: spot.area_code || null,
+        unesco: spot.unesco || false,
+        use_time: spot.use_time || '',
+        rest_date: spot.rest_date || '',
+        parking: spot.parking || '',
+        info_center: spot.info_center || ''
+      };
+    });
+
+    res.json({
+      success: true,
+      message: `찍고갈래 ${category || '전체'} 데이터 조회 완료`,
+      data: stampData,
+      count: stampData.length,
+      source: 'RDS TouristSpots',
+      category: category || 'all'
+    });
+  } catch (error) {
+    console.error('찍고갈래 관광지 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '찍고갈래 관광지 조회 실패',
+      error: error.message
+    });
+  }
+});
+
+// UNESCO 사이트 전용 API
+app.get('/api/stamp/unesco-spots', async (req, res) => {
+  try {
+    const { latitude, longitude, limit = 50 } = req.query;
+    
+    console.log(`🏛️ UNESCO 사이트 조회: ${latitude}, ${longitude}, limit: ${limit}`);
+    
+    // RDS에서 UNESCO=true인 데이터만 조회
+    const query = `
+      SELECT 
+        *,
+        (
+          6371 * acos(
+            cos(radians(:latitude)) * 
+            cos(radians("latitude")) * 
+            cos(radians("longitude") - radians(:longitude)) + 
+            sin(radians(:latitude)) * 
+            sin(radians("latitude"))
+          )
+        ) AS distance
+      FROM "TouristSpots"
+      WHERE "longitude" IS NOT NULL 
+        AND "latitude" IS NOT NULL
+        AND "unesco" = true
+      ORDER BY distance
+      LIMIT :limit
+    `;
+
+    const [results] = await sequelize.query(query, {
+      replacements: { 
+        latitude: parseFloat(latitude), 
+        longitude: parseFloat(longitude), 
+        limit: parseInt(limit) 
+      }
+    });
+
+    // 찍고갈래 페이지 형식으로 데이터 변환
+    const unescoData = results.map(spot => {
+      // 원본 ID 사용 (패딩 제거)
+      const spotId = spot.content_id || spot.id;
+      
+      console.log(`🏛️ UNESCO ID 사용: 원본=${spot.content_id || spot.id} → 사용=${spotId}`);
+      
+      return {
+        id: spotId,
+        content_id: spot.content_id,
+        name: spot.title,
+        title: spot.title,
+        nameEn: spot.title,
+        lat: parseFloat(spot.latitude),
+        lng: parseFloat(spot.longitude),
+        latitude: parseFloat(spot.latitude),
+        longitude: parseFloat(spot.longitude),
+        description: spot.overview || 'UNESCO 세계유산',
+        overview: spot.overview || 'UNESCO 세계유산 상세 정보',
+        popular: true,
+        image: spot.image_url || '/image/default-tourist-spot.jpg',
+        image_url: spot.image_url || '/image/default-tourist-spot.jpg',
+        rating: generateRating(spot),
+        reviews: generateReviews(spot),
+        address: spot.address || '',
+        tel: spot.tel || '',
+        homepage: spot.homepage || '',
+        distance: spot.distance || 0,
+        area_name: spot.area_name || '서울',
+        spot_category: spot.spot_category || '문화재',
+        area_code: spot.area_code || null,
+        unesco: true,
+        use_time: spot.use_time || '',
+        rest_date: spot.rest_date || '',
+        parking: spot.parking || '',
+        info_center: spot.info_center || ''
+      };
+    });
+
+    console.log(`✅ UNESCO 데이터 ${unescoData.length}개 반환`);
+    unescoData.forEach((spot, index) => {
+      console.log(`  ${index + 1}. ${spot.name} (${spot.area_name}) - ${spot.distance?.toFixed(2)}km`);
+    });
+
+    res.json({
+      success: true,
+      message: 'UNESCO 세계유산 데이터 조회 완료',
+      data: unescoData,
+      count: unescoData.length,
+      source: 'RDS UNESCO Sites'
+    });
+  } catch (error) {
+    console.error('UNESCO 사이트 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: 'UNESCO 사이트 조회 실패',
+      error: error.message
+    });
+  }
+});
+        popular: true,
+        image: spot.image_url || '/image/default-tourist-spot.jpg',
+        rating: generateRating(spot),
+        reviews: generateReviews(spot),
+        address: spot.address || '',
+        tel: spot.tel || '',
+        homepage: spot.homepage || '',
+        distance: spot.distance || 0,
+        area_name: spot.area_name || '서울',
+        spot_category: spot.spot_category || '문화재',
+        area_code: spot.area_code || null,
+        unesco: true
+      };
+    });
+
+    res.json({
+      success: true,
+      message: 'UNESCO 사이트 조회 완료',
+      data: unescoData,
+      count: unescoData.length,
+      source: 'RDS UNESCO Sites'
+    });
+  } catch (error) {
+    console.error('UNESCO 사이트 조회 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: 'UNESCO 사이트 조회 실패',
+      error: error.message
+    });
+  }
+});
+
 // GPS 기반 가까운 관광지 조회 (메인 페이지용)
 app.get('/api/tourist-spots/nearby', async (req, res) => {
   try {
@@ -1977,13 +2704,24 @@ app.get('/api/tourist-spots/:contentId', async (req, res) => {
 
     console.log(`🔍 관광지 상세 정보 조회: ${contentId}`);
     
-    // communityService를 통해 상세정보 조회
-    const detailInfo = await communityService.getTouristSpotDetail(contentId);
+    // 직접 데이터베이스에서 조회
+    const spot = await TouristSpot.findOne({
+      where: { content_id: contentId }
+    });
+
+    if (!spot) {
+      return res.status(404).json({
+        success: false,
+        message: '관광지를 찾을 수 없습니다.'
+      });
+    }
+
+    console.log(`✅ 관광지 상세 정보 조회 완료: ${spot.title}`);
 
     res.json({
       success: true,
       message: '관광지 상세정보 조회 완료',
-      data: detailInfo
+      data: spot
     });
   } catch (error) {
     console.error('관광지 상세정보 조회 오류:', error);
@@ -2017,6 +2755,121 @@ app.get('/api/tourist-spots/stats', async (req, res) => {
   }
 });
 
+// 카테고리별 관광지 조회 API
+app.get('/api/tourist-spots/category/:categoryType', async (req, res) => {
+  try {
+    const { categoryType } = req.params;
+    const { latitude, longitude, radius = 10000 } = req.query;
+
+    console.log(`📡 카테고리별 관광지 조회: ${categoryType}`);
+    console.log(`📍 위치: ${latitude}, ${longitude}, 반경: ${radius}m`);
+
+    // 카테고리 매핑
+    const categoryMap = {
+      'culturalHeritage': '문화재',
+      'touristSpot': '관광지', 
+      'experienceCenter': '문화시설'
+    };
+
+    const spotCategory = categoryMap[categoryType];
+    if (!spotCategory) {
+      return res.status(400).json({ error: '잘못된 카테고리입니다.' });
+    }
+
+    // RDS에서 카테고리별 데이터 조회 (실제 테이블 구조에 맞게 수정)
+    const query = `
+      SELECT 
+        id,
+        content_id,
+        title,
+        overview,
+        image_url as first_image,
+        image_url as first_image2,
+        address as addr1,
+        '' as addr2,
+        tel,
+        homepage,
+        latitude,
+        longitude,
+        area_code,
+        area_name,
+        spot_category,
+        false as unesco,
+        (6371000 * acos(
+          cos(radians(:latitude)) * cos(radians(latitude)) * 
+          cos(radians(longitude) - radians(:longitude)) + 
+          sin(radians(:latitude)) * sin(radians(latitude))
+        )) AS distance
+      FROM tourist_spots 
+      WHERE spot_category = :spotCategory
+        AND latitude IS NOT NULL 
+        AND longitude IS NOT NULL
+        AND (6371000 * acos(
+          cos(radians(:latitude)) * cos(radians(latitude)) * 
+          cos(radians(longitude) - radians(:longitude)) + 
+          sin(radians(:latitude)) * sin(radians(latitude))
+        )) <= :radius
+      ORDER BY distance ASC
+      LIMIT 50
+    `;
+
+    const spots = await sequelize.query(query, {
+      type: QueryTypes.SELECT,
+      replacements: {
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude),
+        radius: parseInt(radius),
+        spotCategory: spotCategory
+      }
+    });
+
+    console.log(`✅ ${spotCategory} 카테고리 데이터 ${spots.length}개 조회 완료`);
+    
+    // 첫 번째 항목의 ID 필드들을 로깅
+    if (spots.length > 0) {
+      console.log('🔍 첫 번째 항목의 ID 필드들:', {
+        id: spots[0].id,
+        content_id: spots[0].content_id,
+        title: spots[0].title,
+        spot_category: spots[0].spot_category
+      });
+    }
+
+    const formattedSpots = spots.map(spot => {
+      // 실제 관광지 식별자는 content_id 사용
+      const actualId = spot.content_id || spot.id;
+      
+      console.log(`🔍 ID 매핑 [${spot.title}]: DB id=${spot.id}, content_id=${spot.content_id} → 사용=${actualId}`);
+      
+      return {
+        id: actualId, // content_id를 id로 사용
+        content_id: spot.content_id, // 원본 content_id 유지
+        title: spot.title,
+        overview: spot.overview,
+        first_image: spot.first_image,
+        first_image2: spot.first_image2,
+        addr1: spot.addr1,
+        addr2: spot.addr2 || '',
+        tel: spot.tel,
+        homepage: spot.homepage,
+        latitude: parseFloat(spot.latitude),
+        longitude: parseFloat(spot.longitude),
+        distance: spot.distance || 0,
+        area_name: spot.area_name || '서울',
+        spot_category: spot.spot_category,
+        area_code: spot.area_code || null,
+        unesco: spot.unesco || false
+      };
+    });
+
+    res.json(formattedSpots);
+
+  } catch (error) {
+    console.error('❌ 카테고리별 관광지 조회 실패:', error);
+    res.status(500).json({ error: '카테고리별 관광지 조회에 실패했습니다.' });
+  }
+});
+
 // 프론트엔드 정적 파일 서빙 (API 라우트 뒤에 배치)
 app.use(express.static(path.join(__dirname, '../finalfront/build')));
 
@@ -2025,3 +2878,5 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../finalfront/build', 'index.html'));
 });
 
+// 서버 시작 시 OAuth 설정 로드
+loadOAuthSecrets();

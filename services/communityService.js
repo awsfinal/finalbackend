@@ -64,6 +64,100 @@ class CommunityService {
     }
   }
 
+  // RDS에서 가까운 관광지 조회 (카테고리별 필터링 포함)
+  async getNearbyTouristSpotsByCategory(latitude, longitude, limit = 50, category = null) {
+    try {
+      console.log(`🔍 RDS에서 카테고리별 관광지 검색: ${latitude}, ${longitude}, category: ${category}`);
+      
+      // 카테고리 매핑 (프론트엔드 카테고리 → RDS spot_category)
+      const categoryMapping = {
+        'culturalHeritage': '문화재',
+        'touristSpot': '관광지', 
+        'experienceCenter': '문화시설'
+      };
+      
+      let categoryFilter = '';
+      let replacements = { 
+        latitude: parseFloat(latitude), 
+        longitude: parseFloat(longitude), 
+        limit: parseInt(limit) 
+      };
+      
+      // 카테고리 필터 추가
+      if (category && categoryMapping[category]) {
+        categoryFilter = 'AND spot_category = :category';
+        replacements.category = categoryMapping[category];
+        console.log(`📂 카테고리 필터 적용: ${category} → ${categoryMapping[category]}`);
+      }
+      
+      const query = `
+        SELECT 
+          id,
+          content_id,
+          title,
+          overview,
+          address,
+          latitude,
+          longitude,
+          image_url,
+          tel,
+          homepage,
+          area_name,
+          spot_category,
+          area_code,
+          unesco,
+          use_time,
+          rest_date,
+          parking,
+          info_center,
+          (
+            6371 * acos(
+              cos(radians(:latitude)) * 
+              cos(radians("latitude")) * 
+              cos(radians("longitude") - radians(:longitude)) + 
+              sin(radians(:latitude)) * 
+              sin(radians("latitude"))
+            )
+          ) AS distance
+        FROM "TouristSpots"
+        WHERE "longitude" IS NOT NULL 
+          AND "latitude" IS NOT NULL
+          AND "content_id" IS NOT NULL
+          ${categoryFilter}
+          AND (
+            6371 * acos(
+              cos(radians(:latitude)) * 
+              cos(radians("latitude")) * 
+              cos(radians("longitude") - radians(:longitude)) + 
+              sin(radians(:latitude)) * 
+              sin(radians("latitude"))
+            )
+          ) <= 50
+        ORDER BY distance
+        LIMIT :limit
+      `;
+
+      const [results] = await sequelize.query(query, {
+        replacements: replacements
+      });
+
+      if (results && results.length > 0) {
+        console.log(`✅ RDS에서 ${category || '전체'} 카테고리 관광지 ${results.length}개 발견`);
+        results.forEach((spot, index) => {
+          console.log(`  ${index + 1}. ${spot.title} (${spot.spot_category}) - ${spot.distance?.toFixed(2)}km`);
+        });
+        return results;
+      }
+
+      console.log(`⚠️ RDS에서 ${category || '전체'} 카테고리 관광지를 찾지 못했습니다.`);
+      return [];
+
+    } catch (error) {
+      console.error('❌ 카테고리별 관광지 조회 오류:', error);
+      return [];
+    }
+  }
+
   // RDS에서 가까운 관광지 조회
   async getNearbyTouristSpots(latitude, longitude, limit = 3) {
     try {
@@ -71,26 +165,40 @@ class CommunityService {
       
       const query = `
         SELECT 
-          *,
+          id,
+          content_id,
+          title,
+          overview,
+          address,
+          latitude,
+          longitude,
+          image_url,
+          tel,
+          homepage,
+          area_name,
+          spot_category,
+          area_code,
+          unesco,
           (
             6371 * acos(
               cos(radians(:latitude)) * 
-              cos(radians("mapY")) * 
-              cos(radians("mapX") - radians(:longitude)) + 
+              cos(radians("latitude")) * 
+              cos(radians("longitude") - radians(:longitude)) + 
               sin(radians(:latitude)) * 
-              sin(radians("mapY"))
+              sin(radians("latitude"))
             )
           ) AS distance
         FROM "TouristSpots"
-        WHERE "mapX" IS NOT NULL 
-          AND "mapY" IS NOT NULL
+        WHERE "longitude" IS NOT NULL 
+          AND "latitude" IS NOT NULL
+          AND "content_id" IS NOT NULL
           AND (
             6371 * acos(
               cos(radians(:latitude)) * 
-              cos(radians("mapY")) * 
-              cos(radians("mapX") - radians(:longitude)) + 
+              cos(radians("latitude")) * 
+              cos(radians("longitude") - radians(:longitude)) + 
               sin(radians(:latitude)) * 
-              sin(radians("mapY"))
+              sin(radians("latitude"))
             )
           ) <= 20
         ORDER BY distance
@@ -273,6 +381,28 @@ class CommunityService {
       }
     } catch (error) {
       console.error('❌ 좋아요 토글 오류:', error);
+      throw error;
+    }
+  }
+
+  // 관광지 상세 정보 조회
+  async getTouristSpotDetail(contentId) {
+    try {
+      console.log(`🔍 관광지 상세 정보 조회: ${contentId}`);
+      
+      const spot = await this.TouristSpot.findOne({
+        where: { content_id: contentId }
+      });
+
+      if (!spot) {
+        console.log('❌ 관광지를 찾을 수 없습니다');
+        return null;
+      }
+
+      console.log(`✅ 관광지 상세 정보 조회 완료: ${spot.title}`);
+      return spot;
+    } catch (error) {
+      console.error('관광지 상세 정보 조회 오류:', error);
       throw error;
     }
   }
