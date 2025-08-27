@@ -77,11 +77,10 @@ const sequelize = new Sequelize(
       idle: 10000
     },
     dialectOptions: {
-      connectTimeout: 60000,
-      ssl: process.env.NODE_ENV === 'production' ? {
+      ssl: {
         require: true,
         rejectUnauthorized: false
-      } : false
+      }
     }
   }
 );
