@@ -1600,7 +1600,7 @@ app.get('/api/weather', async (req, res) => {
     else if (currentHour < 23) baseTime = '2000';
     else baseTime = '2300';
 
-    const API_KEY = 'aGeZJm3vws3jIuW+grRDsEkSWm4QU4pEOi7np4ttUyQCODfqm976GRSci8iUbEIT0EWQwR5vTU5oDt1YCgTqfw==';
+    const API_KEY = 'TfFM7fVrlUUFOi1lkNqaLaNJJg2t9gZ3MM6GNToLp9GJAUOqZVjFGlN3NO04k9DHiY1CaEvzaHjGNW/vZAEXyA==';
     const API_URL = 'https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst';
     
     const params = new URLSearchParams({
@@ -2622,20 +2622,27 @@ app.get('/api/stamp/unesco-spots', async (req, res) => {
     });
   }
 });
-        popular: true,
-        image: spot.image_url || '/image/default-tourist-spot.jpg',
-        rating: generateRating(spot),
-        reviews: generateReviews(spot),
-        address: spot.address || '',
-        tel: spot.tel || '',
-        homepage: spot.homepage || '',
-        distance: spot.distance || 0,
-        area_name: spot.area_name || '서울',
-        spot_category: spot.spot_category || '문화재',
-        area_code: spot.area_code || null,
-        unesco: true
-      };
-    });
+
+// 관광지 정보 매핑 함수
+function mapTouristSpot(spot) {
+  return {
+    id: spot.id,
+    name: spot.name,
+    description: spot.description,
+    popular: true,
+    image: spot.image_url || '/image/default-tourist-spot.jpg',
+    rating: generateRating(spot),
+    reviews: generateReviews(spot),
+    address: spot.address || '',
+    tel: spot.tel || '',
+    homepage: spot.homepage || '',
+    distance: spot.distance || 0,
+    area_name: spot.area_name || '서울',
+    spot_category: spot.spot_category || '문화재',
+    area_code: spot.area_code || null,
+    unesco: true
+  };
+}
 
     res.json({
       success: true,
