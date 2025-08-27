@@ -331,7 +331,9 @@ async function getTouristSpots(latitude, longitude, limit = 10) {
           ST_Point(longitude, latitude)::geography,
           ST_Point($1, $2)::geography
         ) as distance
+        
       FROM "TouristSpots"
+
       WHERE ST_DWithin(
         ST_Point(longitude, latitude)::geography,
         ST_Point($1, $2)::geography,
