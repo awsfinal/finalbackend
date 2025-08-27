@@ -2617,7 +2617,7 @@ app.get('/api/stamp/unesco-spots', async (req, res) => {
     console.error('UNESCO 사이트 조회 오류:', error);
     res.status(500).json({
       success: false,
-      message: 'UNESCO 사이트 조회 실패',
+            message: 'UNESCO 사이트 조회 실패',
       error: error.message
     });
   }
@@ -2644,23 +2644,6 @@ function mapTouristSpot(spot) {
   };
 }
 
-    res.json({
-      success: true,
-      message: 'UNESCO 사이트 조회 완료',
-      data: unescoData,
-      count: unescoData.length,
-      source: 'RDS UNESCO Sites'
-    });
-  } catch (error) {
-    console.error('UNESCO 사이트 조회 오류:', error);
-    res.status(500).json({
-      success: false,
-      message: 'UNESCO 사이트 조회 실패',
-      error: error.message
-    });
-  }
-});
-
 // GPS 기반 가까운 관광지 조회 (메인 페이지용)
 app.get('/api/tourist-spots/nearby', async (req, res) => {
   try {
@@ -2668,6 +2651,7 @@ app.get('/api/tourist-spots/nearby', async (req, res) => {
     
     if (!latitude || !longitude) {
       return res.status(400).json({
+
         success: false,
         message: 'GPS 좌표가 필요합니다.'
       });
@@ -2883,6 +2867,7 @@ app.use(express.static(path.join(__dirname, '../finalfront/build')));
 // SPA를 위한 캐치올 라우트 (모든 API 라우트 뒤에 배치)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../finalfront/build', 'index.html'));
+
 });
 
 // 서버 시작 시 OAuth 설정 로드
